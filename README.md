@@ -9,6 +9,8 @@ If you're thinking of setting up a server with WireConf but already have an exis
 
 **Disclaimer**: This was largely vibe-coded but with human scrutiny over the code and its quality. I spent several long nights going over parts that needed fixed because the model didn't understand WireGuard configs too well. This is currently running on one of my servers handling over 40 clients, and it's been doing pretty well.
 
+**Other disclaimer**: This is still very much in an alpha state where anything and everything may be a breaking change between updates.
+
 ## Features
 
 - **Network Management**: Create and configure multiple WireGuard interfaces.
@@ -64,21 +66,31 @@ Native install
 ## Development
 
 ### Backend
+
+You'll need to `git clone` this repository. There are scripts to run the different components but you need to set up the environment first.
+
+System prerequisites:
+`sudo apt install wireguard-tools iptables python3 python3-pip nodejs npm` on Debian-based systems.
+
+Or 
+`apk add wireguard-tools iptables python3 nodejs npm` for Alpine
+
 The backend is a Flask application located in the `backend/` directory.
 ```bash
-cd backend
-pip install -r requirements.txt
-python run.py
+cd wireconf
+./run-backend.sh
 ```
 
 ### Frontend
 The frontend is a Vite-powered React application located in the `frontend/` directory.
 ```bash
-cd frontend
-npm install
-npm run dev
+cd wireconf
+./run-frontend.sh
 ```
 
 ## Deployment Considerations
 
 When running in Docker, WireConf requires `NET_ADMIN` and `SYS_MODULE` capabilities to manage the WireGuard interface and iptables rules on the host. It also requires access to `/etc/wireguard` and `/lib/modules`.
+
+
+\- made with love from wynn & gemini
