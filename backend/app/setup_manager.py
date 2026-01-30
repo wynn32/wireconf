@@ -4,6 +4,7 @@ Setup Manager - Handles installation status, server configuration, and setup wiz
 
 import os
 import subprocess
+import shutil
 from .models import db, ServerConfig
 from .command_utils import get_command_path
 from .key_manager import KeyManager
@@ -138,6 +139,15 @@ class SetupManager:
         config.setup_completed = True
         db.session.commit()
         
+        # Promote current DB to safety baseline so reverts don't lose setup state
+        try:
+            from .safety_manager import SafetyManager
+            if os.path.exists(SafetyManager.DB_PATH):
+                shutil.copy2(SafetyManager.DB_PATH, SafetyManager.LAST_GOOD_DB_PATH)
+                print("[SetupManager] Promoted current DB to last_good baseline.")
+        except Exception as e:
+            print(f"[SetupManager] Failed to promote DB to baseline: {e}")
+
         return True
     
     @staticmethod
@@ -152,17 +162,36 @@ class SetupManager:
             except:
                 pass
         return False
+    
+    @staticmethod
+    def get_server_details():
+        """Return server configuration details for authenticated consumers."""
+        config = SetupManager.get_server_config()
+
+        # Determine whether server has been configured (endpoint + private key)
+        server_configured = bool(config.server_endpoint and config.server_private_key)
+
+        # Count networks/clients
+        from .models import Network, Client
+        has_networks = Network.query.count() > 0
+        has_clients = Client.query.count() > 0
+
+        return {
+            'server_endpoint': config.server_endpoint,
+            'server_port': config.server_port,
+            'server_public_key': config.server_public_key,
+            'server_configured': server_configured,
+            'has_networks': has_networks,
+            'has_clients': has_clients
+        }
 
     @staticmethod
     def get_setup_status():
         """Get current setup status."""
         config = SetupManager.get_server_config()
+        # Public minimal status - do not expose server endpoint/keys
         return {
             'installed': SetupManager.is_installed(),
             'setup_completed': config.setup_completed,
-            'server_configured': bool(config.server_endpoint and config.server_private_key),
-            'server_endpoint': config.server_endpoint,
-            'server_port': config.server_port,
-            'server_public_key': config.server_public_key,
             'has_existing_host_config': SetupManager.check_host_config()
         }

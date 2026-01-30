@@ -16,7 +16,7 @@ const ServerSettings: React.FC = () => {
     useEffect(() => {
         const fetchStatus = async () => {
             try {
-                const res = await api.get('/setup/status');
+                const res = await api.get('/setup/config');
                 const data = res.data;
                 setForm({
                     endpoint: data.server_endpoint || '',

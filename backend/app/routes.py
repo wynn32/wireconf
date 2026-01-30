@@ -49,16 +49,17 @@ def update_client_full_tunnel_status(client_id):
 @bp.route('/setup/status', methods=['GET'])
 def get_setup_status():
     """Get current setup and installation status."""
+    # Public/minimal status (no server endpoint/keys)
     status = SetupManager.get_setup_status()
-    
-    # Also check if there are any networks and clients
-    network_count = Network.query.count()
-    client_count = Client.query.count()
-    
-    status['has_networks'] = network_count > 0
-    status['has_clients'] = client_count > 0
-    
     return jsonify(status)
+
+
+@bp.route('/setup/config', methods=['GET'])
+@require_permission('GLOBAL', 'VIEW')
+def get_setup_config():
+    """Authenticated endpoint returning server configuration details."""
+    details = SetupManager.get_server_details()
+    return jsonify(details)
 
 @bp.route('/setup/install', methods=['POST'])
 def mark_installed():
@@ -969,7 +970,6 @@ def commit_changes():
         if transaction_id:
             SafetyManager.abort_transaction()
         return jsonify({'error': str(e)}), 500
-        
     result['transaction_id'] = transaction_id
     return jsonify(result)
 
