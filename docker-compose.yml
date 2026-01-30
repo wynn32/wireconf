@@ -28,6 +28,8 @@ services:
   #   volumes:
   #     - ./backend/instance:/app/backend/instance
   #     - shared-conf:/etc/wireguard
+  #   environment:
+  #     - VITE_API_URL=/api
   #   depends_on:
   #     - wireguard-server
 
@@ -45,7 +47,8 @@ services:
   #     - shared-conf:/config
   #     - /lib/modules:/lib/modules
   #   ports:
-  #     - "51821:51820/udp"
+  #     - "${WEB_PORT:-80}:80"           # Web UI + API (Proxied from sidecar)
+  #     - "${WG_PORT:-51820}:51820/udp" # WireGuard
   #   restart: unless-stopped
 
 # volumes:
