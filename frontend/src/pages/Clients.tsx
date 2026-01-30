@@ -506,7 +506,7 @@ const Clients: React.FC = () => {
                     onSuccess={() => {
                         fetchData();
                         // Optionally reload page to reflect server changes if critical
-                    }}
+                    }} />
             )}
 
             {viewConfig && (
@@ -517,7 +517,6 @@ const Clients: React.FC = () => {
                 />
             )}
         </div>
-        </div >
     );
 };
 
