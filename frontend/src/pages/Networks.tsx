@@ -1,0 +1,117 @@
+import React, { useEffect, useState } from 'react';
+import api from '../api';
+
+interface Network {
+    id: number;
+    name: string;
+    cidr: string;
+    interface_address: string;
+}
+
+const Networks: React.FC = () => {
+    const [networks, setNetworks] = useState<Network[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [formData, setFormData] = useState({ name: '', cidr: '', interface_address: '' });
+
+    const fetchNetworks = async () => {
+        try {
+            const res = await api.get('/networks');
+            setNetworks(res.data);
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchNetworks();
+    }, []);
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        try {
+            await api.post('/networks', formData);
+            setFormData({ name: '', cidr: '', interface_address: '' });
+            fetchNetworks();
+        } catch (err) {
+            alert('Failed to create network');
+        }
+    };
+
+    return (
+        <div className="space-y-6">
+            <div className="bg-slate-800 p-6 rounded-lg shadow-lg border border-slate-700">
+                <h2 className="text-xl font-semibold mb-4 text-emerald-400">Add New Network</h2>
+                <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                    <div>
+                        <label className="block text-sm text-slate-400 mb-1">Name</label>
+                        <input
+                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-emerald-500 outline-none"
+                            value={formData.name}
+                            onChange={e => setFormData({ ...formData, name: e.target.value })}
+                            placeholder="e.g. IoT"
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm text-slate-400 mb-1">CIDR (Zone)</label>
+                        <input
+                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-emerald-500 outline-none"
+                            value={formData.cidr}
+                            onChange={e => setFormData({ ...formData, cidr: e.target.value })}
+                            placeholder="e.g. 10.0.2.0/24"
+                            required
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-sm text-slate-400 mb-1">Interface IP</label>
+                        <input
+                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-emerald-500 outline-none"
+                            value={formData.interface_address}
+                            onChange={e => setFormData({ ...formData, interface_address: e.target.value })}
+                            placeholder="e.g. 10.0.2.1/24"
+                            required
+                        />
+                    </div>
+                    <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded transition-colors font-medium">
+                        Create Zone
+                    </button>
+                </form>
+            </div>
+
+            <div className="bg-slate-800 rounded-lg shadow-lg border border-slate-700 overflow-hidden">
+                <h2 className="text-xl font-semibold p-6 border-b border-slate-700 text-slate-100">Active Networks</h2>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left">
+                        <thead className="bg-slate-900 text-slate-400 uppercase text-xs">
+                            <tr>
+                                <th className="p-4">ID</th>
+                                <th className="p-4">Name</th>
+                                <th className="p-4">CIDR</th>
+                                <th className="p-4">Interface Address</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-700">
+                            {loading ? (
+                                <tr><td colSpan={4} className="p-4 text-center text-slate-500">Loading...</td></tr>
+                            ) : networks.map(net => (
+                                <tr key={net.id} className="hover:bg-slate-700/50 transition-colors">
+                                    <td className="p-4 text-slate-500">#{net.id}</td>
+                                    <td className="p-4 font-medium text-slate-200">{net.name}</td>
+                                    <td className="p-4 font-mono text-emerald-400">{net.cidr}</td>
+                                    <td className="p-4 font-mono text-blue-400">{net.interface_address}</td>
+                                </tr>
+                            ))}
+                            {!loading && networks.length === 0 && (
+                                <tr><td colSpan={4} className="p-4 text-center text-slate-500">No networks found.</td></tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default Networks;
