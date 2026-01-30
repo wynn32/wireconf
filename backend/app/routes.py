@@ -496,13 +496,24 @@ def download_client_config(client_id):
     server_public_key = server_config.server_public_key
     server_endpoint = f"{server_config.server_endpoint}:{server_config.server_port}"
     
-    # Fetch all routed CIDRs from OTHER clients
-    # This allows this client to access networks behind OTHER clients
+    # Fetch routed CIDRs that this client has explicit access to
+    # Only include routes where this client has an ACCEPT rule to that destination
+    accessible_routes = []
     all_routes = Route.query.filter(Route.via_client_id != client.id).all()
-    other_routes = [r.target_cidr for r in all_routes]
+    
+    for route in all_routes:
+        # Check if client has an ACCEPT rule for this destination
+        access_rule = AccessRule.query.filter(
+            AccessRule.source_client_id == client.id,
+            AccessRule.dest_cidr == route.target_cidr,
+            AccessRule.action == 'ACCEPT'
+        ).first()
+        
+        if access_rule:
+            accessible_routes.append(route.target_cidr)
     
     # Use the new render_client_config method
-    config = ConfigRenderer.render_client_config(client, server_public_key, server_endpoint, other_routes)
+    config = ConfigRenderer.render_client_config(client, server_public_key, server_endpoint, accessible_routes)
     
     return send_file(
         io.BytesIO(config.encode('utf-8')),
