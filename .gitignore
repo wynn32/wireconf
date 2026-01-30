@@ -3,5 +3,6 @@ venv
 __pycache__
 node_modules
 *.db
-wireconf.zip
+wireguard-mgmt.zip
 package-lock.json
+*.last_good

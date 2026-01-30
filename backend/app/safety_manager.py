@@ -1,6 +1,9 @@
+import os
 import shutil
 import threading
 import uuid
+import json
+import time
 from .system_service import SystemService
 
 class SafetyManager:
@@ -13,10 +16,34 @@ class SafetyManager:
     # DB path
     DB_PATH = os.path.join(os.getcwd(), "backend/instance/wireguard.db")
     LAST_GOOD_DB_PATH = DB_PATH + ".last_good"
+    SIDECAR_PATH = os.path.join(os.getcwd(), "backend/instance/safety_transaction.json")
+
+    @classmethod
+    def _save_state(cls, transaction_id, status, expires_at):
+        """Persists transaction state to disk."""
+        try:
+            state = {
+                'transaction_id': transaction_id,
+                'status': status,
+                'expires_at': expires_at
+            }
+            with open(cls.SIDECAR_PATH, 'w') as f:
+                json.dump(state, f)
+        except Exception as e:
+            print(f"[SafetyManager] Failed to save state: {e}")
+
+    @classmethod
+    def _clear_state(cls):
+        """Removes persistent state."""
+        if os.path.exists(cls.SIDECAR_PATH):
+            try:
+                os.remove(cls.SIDECAR_PATH)
+            except Exception as e:
+                print(f"[SafetyManager] Failed to clear state: {e}")
 
     @classmethod
     def init(cls, app, perform_commit_fn):
-        """Initialize with app context and commit function."""
+        """Initialize with app context and commit function. Handles recovery."""
         cls._app = app
         cls._perform_commit_fn = perform_commit_fn
         # Create initial baseline if not exists
@@ -24,15 +51,46 @@ class SafetyManager:
             shutil.copy2(cls.DB_PATH, cls.LAST_GOOD_DB_PATH)
             print("[SafetyManager] Initialized baseline last_good DB.")
 
+        # RECOVERY LOGIC
+        if os.path.exists(cls.SIDECAR_PATH):
+            try:
+                with open(cls.SIDECAR_PATH, 'r') as f:
+                    state = json.load(f)
+                
+                tid = state.get('transaction_id')
+                expires_at = state.get('expires_at', 0)
+                status = state.get('status')
+
+                if status == 'pending':
+                    remaining = expires_at - time.time()
+                    if remaining <= 0:
+                        print(f"[SafetyManager] RECOVERY: Transaction {tid} timed out during downtime. Reverting...")
+                        cls._trigger_revert_logic()
+                        cls._clear_state()
+                    else:
+                        print(f"[SafetyManager] RECOVERY: Rescheduling transaction {tid} for {int(remaining)}s.")
+                        cls._transaction_id = tid
+                        cls._timer = threading.Timer(remaining, cls._auto_revert, args=[tid])
+                        cls._timer.start()
+            except Exception as e:
+                print(f"[SafetyManager] Recovery failed: {e}")
+                cls._clear_state()
+
     @classmethod
     def start_transaction(cls):
-        """Starts the revert timer and returns a unique transaction ID."""
+        """Starts the revert timer and returns a unique transaction ID. Blocks if another is active."""
         with cls._lock:
+            if cls._transaction_id is not None:
+                raise RuntimeError("Global lock held: A configuration change is already being verified.")
+            
             if cls._timer:
                 cls._timer.cancel()
             
             transaction_id = str(uuid.uuid4())
             cls._transaction_id = transaction_id
+            
+            expires_at = time.time() + 60.0
+            cls._save_state(transaction_id, 'pending', expires_at)
             
             # Start Timer (60s)
             cls._timer = threading.Timer(60.0, cls._auto_revert, args=[transaction_id])
@@ -53,9 +111,14 @@ class SafetyManager:
             
             # PROMOTE: Current DB is now the Last Known Good State
             if os.path.exists(cls.DB_PATH):
-                shutil.copy2(cls.DB_PATH, cls.LAST_GOOD_DB_PATH)
+                try:
+                    shutil.copy2(cls.DB_PATH, cls.LAST_GOOD_DB_PATH)
+                except Exception as e:
+                    print(f"[SafetyManager] Promotion failed (FS Error): {e}")
+                    # We continue because the config IS applied, just the backup is old
             
             cls._transaction_id = None
+            cls._clear_state()
             print(f"[SafetyManager] Transaction {transaction_id} CONFIRMED. Baseline updated.")
             return True
 
@@ -70,6 +133,7 @@ class SafetyManager:
             if cls._transaction_id:
                 cls._trigger_revert_logic()
                 cls._transaction_id = None
+                cls._clear_state()
                 return True
         return False
 
@@ -82,6 +146,7 @@ class SafetyManager:
             print(f"[SafetyManager] TIMEOUT for {transaction_id}. Reverting to last_good DB...")
             cls._trigger_revert_logic()
             cls._transaction_id = None
+            cls._clear_state()
 
     @classmethod
     def _trigger_revert_logic(cls):

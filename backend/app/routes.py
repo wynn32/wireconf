@@ -832,9 +832,25 @@ def commit_changes():
     
     transaction_id = None
     if use_safety:
-        transaction_id = SafetyManager.start_transaction()
+        try:
+            transaction_id = SafetyManager.start_transaction()
+        except RuntimeError as e:
+            return jsonify({'error': str(e)}), 409 # Conflict
         
-    result = _perform_commit()
+    try:
+        result = _perform_commit()
+        # If _perform_commit returned an error in its result dict (non-exception failure)
+        #if result.get('status', '').startswith('committed_with_warning'):
+        #     # This is a grey area: did it fail enough to warrant revert?
+        #     # Usually "committed_with_warning" means config was written but service restart failed.
+        #     # We might want to revert if the user can't confirm. Let's keep the timer going.
+        #     pass
+    except Exception as e:
+        print(f"[Routes] Critical failure during commit: {e}")
+        if transaction_id:
+            SafetyManager.abort_transaction()
+        return jsonify({'error': str(e)}), 500
+        
     result['transaction_id'] = transaction_id
     return jsonify(result)
 

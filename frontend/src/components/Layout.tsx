@@ -67,7 +67,12 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
         } catch (err: any) {
             setSafetyState('idle');
-            setStatusMsg(`Error: ${err.message}`);
+            if (err.response?.status === 409) {
+                setStatusMsg('Global lock held. Please try again after the current verification finishes.');
+            } else {
+                setStatusMsg(`Error: ${err.message}`);
+            }
+            setTimeout(() => setStatusMsg(''), 5000);
         }
     };
 
