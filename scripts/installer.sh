@@ -51,6 +51,19 @@ esac
 # Create directory structure if it doesn't exist
 mkdir -p "$INSTALL_DIR"
 
+# Configuration Prompts
+echo "--- Configuration ---"
+if [ -f "$BACKEND_DIR/.env" ]; then
+    CURRENT_WG_PATH=$(grep WG_CONFIG_PATH "$BACKEND_DIR/.env" | cut -d'=' -f2)
+fi
+: "${CURRENT_WG_PATH:=/etc/wireguard/wg0.conf}"
+
+read -p "Enter WireGuard config path [$CURRENT_WG_PATH]: " WG_PATH
+WG_PATH=${WG_PATH:-$CURRENT_WG_PATH}
+
+echo "WG_CONFIG_PATH=$WG_PATH" > "$BACKEND_DIR/.env"
+echo "WireGuard config path set to $WG_PATH"
+
 # Setup Python Virtual Environment and Backend
 echo "Setting up backend..."
 python3 -m venv "$VENV_DIR"

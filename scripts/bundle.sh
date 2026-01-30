@@ -15,6 +15,11 @@ echo "================================================"
 # 1. Build Frontend
 echo "[1/4] Building Frontend..."
 cd "$REPO_ROOT/frontend"
+
+# Ensure .env for production build
+echo "VITE_API_URL=/api" > .env.production
+echo "VITE_API_URL=/api" > .env
+
 if [ ! -d "node_modules" ]; then
     npm install
 fi
