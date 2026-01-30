@@ -5,7 +5,9 @@ from .key_manager import KeyManager
 from .config_renderer import ConfigRenderer
 from .setup_manager import SetupManager
 from .importer import ConfigImporter
+from .importer import ConfigImporter
 from .system_service import SystemService
+from .safety_manager import SafetyManager
 import io
 import time
 import datetime
@@ -825,6 +827,32 @@ def _perform_commit():
 
 @bp.route('/commit', methods=['POST'])
 def commit_changes():
+    data = request.json or {}
+    use_safety = data.get('use_safety', True) # Default to true
+    
+    transaction_id = None
+    if use_safety:
+        transaction_id = SafetyManager.start_transaction()
+        
     result = _perform_commit()
+    result['transaction_id'] = transaction_id
     return jsonify(result)
+
+@bp.route('/commit/confirm', methods=['POST'])
+def confirm_commit():
+    data = request.json or {}
+    transaction_id = data.get('transaction_id')
+    if not transaction_id:
+        return jsonify({'error': 'Transaction ID required'}), 400
+        
+    success = SafetyManager.confirm_transaction(transaction_id)
+    if success:
+        return jsonify({'status': 'confirmed'})
+    else:
+        return jsonify({'error': 'Invalid transaction or expired'}), 400
+
+@bp.route('/commit/cancel', methods=['POST'])
+def cancel_commit():
+    SafetyManager.abort_transaction()
+    return jsonify({'status': 'reverting'})
 

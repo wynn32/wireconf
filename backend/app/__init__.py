@@ -15,7 +15,10 @@ def create_app():
     with app.app_context():
         db.create_all()
 
-    from .routes import bp
+    from .routes import bp, _perform_commit
     app.register_blueprint(bp)
+
+    from .safety_manager import SafetyManager
+    SafetyManager.init(app, _perform_commit)
 
     return app
