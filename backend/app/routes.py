@@ -557,6 +557,7 @@ def commit_preview():
             lines.append(l)
         return "\n".join(lines).strip()
         
+    old_conf = ""
     if os.path.exists(config_path):
         with open(config_path, "r") as f:
             old_conf = f.read()

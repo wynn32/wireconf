@@ -26,7 +26,10 @@ class ConfigRenderer:
         conf.append("MTU = 1420")
         conf.append("")
         conf.append("# Forwarding and Firewall")
-        conf.append("PreUp = sysctl -w net.ipv4.ip_forward=1")
+        # In some environments (like non-privileged Docker), setting sysctl here fails.
+        # We allow skipping it if handled by the host/entrypoint.
+        if os.environ.get("WG_SKIP_IP_FORWARD") != "true":
+            conf.append("PreUp = sysctl -w net.ipv4.ip_forward=1")
         
         # We call our external script
         conf.append(f"PostUp = {rules_script_path} apply")

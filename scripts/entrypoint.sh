@@ -5,8 +5,14 @@ echo "Starting WireConf Entrypoint..."
 
 # 1. Enable IP Forwarding if possible (requires --privileged or NET_ADMIN)
 if [ "$ENABLE_IP_FORWARD" = "true" ]; then
-    echo "Enabling IP forwarding..."
-    sysctl -w net.ipv4.ip_forward=1 || echo "Warning: Could not set sysctl. Ensure container is run with sufficient privileges."
+    CURRENT_VAL=$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || echo "0")
+    if [ "$CURRENT_VAL" != "1" ]; then
+        echo "Enabling IP forwarding..."
+        SYSCTL_PATH=$(command -v sysctl || which sysctl || echo "/usr/sbin/sysctl")
+        $SYSCTL_PATH -w net.ipv4.ip_forward=1 || echo "Warning: Could not set sysctl. Ensure container is run with sufficient privileges."
+    else
+        echo "IP forwarding is already enabled."
+    fi
 fi
 
 # 2. Check for shared volume in sidecar mode
