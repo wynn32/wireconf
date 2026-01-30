@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import api from '../api';
+import CommitModal from './CommitModal';
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const location = useLocation();
     const [committing, setCommitting] = useState(false);
     const [statusMsg, setStatusMsg] = useState('');
+    const [showCommitModal, setShowCommitModal] = useState(false);
 
-    const handleCommit = async () => {
+    const handleConfirmCommit = async () => {
+        setShowCommitModal(false);
         setCommitting(true);
         setStatusMsg('Committing...');
         try {
@@ -38,6 +41,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                         <div className="space-x-2">
                             <Link to="/clients" className={navClass('/clients')}>Clients</Link>
                             <Link to="/networks" className={navClass('/networks')}>Networks</Link>
+                            <Link to="/topology" className={navClass('/topology')}>Topology</Link>
                         </div>
                     </div>
                     <div className="flex items-center space-x-4">
@@ -47,7 +51,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                             </span>
                         )}
                         <button
-                            onClick={handleCommit}
+                            onClick={() => setShowCommitModal(true)}
                             disabled={committing}
                             className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-600 text-white px-4 py-2 rounded-lg font-medium transition-all shadow-md active:scale-95"
                         >
@@ -56,6 +60,13 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                     </div>
                 </div>
             </nav>
+
+            {showCommitModal && (
+                <CommitModal
+                    onClose={() => setShowCommitModal(false)}
+                    onConfirm={handleConfirmCommit}
+                />
+            )}
             <main className="container mx-auto p-6">
                 {children}
             </main>

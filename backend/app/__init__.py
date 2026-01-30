@@ -1,11 +1,13 @@
 from flask import Flask
 from .models import db
-
+from flask_cors import CORS
 
 def create_app():
     app = Flask(__name__)
     app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///wireguard.db'
     app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+    CORS(app)
 
     # Initialize Database
     db.init_app(app)

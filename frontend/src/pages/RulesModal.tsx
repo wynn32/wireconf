@@ -3,7 +3,8 @@ import api from '../api';
 
 interface Rule {
     id: number;
-    dest_cidr: string;
+    dest_cidr: string | null;
+    dest_client_id: number | null;
     destination_type: string;
     port: number | null;
     proto: string;
@@ -38,15 +39,16 @@ const RulesModal: React.FC<Props> = ({ client, onClose }) => {
     const [networks, setNetworks] = useState<Network[]>([]);
 
     // Rule creation state
-    const [ruleType, setRuleType] = useState<'custom' | 'routed' | 'network'>('custom');
+    const [ruleType, setRuleType] = useState<'custom' | 'routed' | 'network' | 'client'>('network');
     const [selectedRouterId, setSelectedRouterId] = useState('');
     const [selectedRoute, setSelectedRoute] = useState('');
     const [selectedNetworkId, setSelectedNetworkId] = useState('');
+    const [selectedTargetClientId, setSelectedTargetClientId] = useState('');
 
     const [form, setForm] = useState({
         destination: '',
         port: '',
-        proto: 'udp',
+        proto: 'all',
         action: 'ACCEPT'
     });
 
@@ -101,6 +103,12 @@ const RulesModal: React.FC<Props> = ({ client, onClose }) => {
         }
     };
 
+    const handleTargetClientChange = (targetId: string) => {
+        setSelectedTargetClientId(targetId);
+        // We don't set destination CIDR here, we'll send dest_client_id
+        setForm(prev => ({ ...prev, destination: '' }));
+    };
+
     const handleDelete = async (id: number) => {
         if (!confirm('Are you sure?')) return;
         try {
@@ -115,17 +123,25 @@ const RulesModal: React.FC<Props> = ({ client, onClose }) => {
         e.preventDefault();
         try {
             const encodedKey = encodeURIComponent(client.public_key);
-            await api.post(`/rules/client/${encodedKey}`, {
+            const payload: any = {
                 destination: form.destination,
-                destination_type: 'host',
+                destination_type: ruleType,
                 port: form.port ? parseInt(form.port, 10) : null,
                 proto: form.proto,
                 action: form.action
-            });
-            setForm({ destination: '', port: '', proto: 'udp', action: 'ACCEPT' });
+            };
+
+            if (ruleType === 'client') {
+                payload.dest_client_id = parseInt(selectedTargetClientId, 10);
+                payload.destination = null;
+            }
+
+            await api.post(`/rules/client/${encodedKey}`, payload);
+            setForm({ destination: '', port: '', proto: 'all', action: 'ACCEPT' });
             setSelectedRouterId('');
             setSelectedRoute('');
             setSelectedNetworkId('');
+            setSelectedTargetClientId('');
             fetchRules();
         } catch {
             alert('Create failed');
@@ -149,18 +165,22 @@ const RulesModal: React.FC<Props> = ({ client, onClose }) => {
                         className="bg-slate-900/50 p-4 rounded mb-6 grid grid-cols-1 md:grid-cols-5 gap-3 items-end border border-slate-700"
                     >
                         <div className="md:col-span-2 space-y-2">
-                            <div className="flex gap-4">
-                                <label className="flex items-center gap-2 text-xs text-slate-300">
-                                    <input type="radio" checked={ruleType === 'custom'} onChange={() => setRuleType('custom')} />
-                                    Custom CIDR/IP
+                            <div className="flex flex-wrap gap-4">
+                                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                                    <input type="radio" checked={ruleType === 'network'} onChange={() => setRuleType('network')} />
+                                    Predefined Network
                                 </label>
-                                <label className="flex items-center gap-2 text-xs text-slate-300">
+                                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
                                     <input type="radio" checked={ruleType === 'routed'} onChange={() => setRuleType('routed')} />
                                     Routed Network
                                 </label>
-                                <label className="flex items-center gap-2 text-xs text-slate-300">
-                                    <input type="radio" checked={ruleType === 'network'} onChange={() => setRuleType('network')} />
-                                    Predefined Network
+                                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                                    <input type="radio" checked={ruleType === 'client'} onChange={() => setRuleType('client')} />
+                                    Specific Client
+                                </label>
+                                <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                                    <input type="radio" checked={ruleType === 'custom'} onChange={() => setRuleType('custom')} />
+                                    Custom CIDR/IP
                                 </label>
                             </div>
 
@@ -217,6 +237,23 @@ const RulesModal: React.FC<Props> = ({ client, onClose }) => {
                                     </select>
                                 </div>
                             )}
+
+                            {ruleType === 'client' && (
+                                <select
+                                    className="w-full bg-slate-800 border border-slate-600 rounded p-2 text-sm text-white"
+                                    value={selectedTargetClientId}
+                                    onChange={e => handleTargetClientChange(e.target.value)}
+                                    required
+                                >
+                                    <option value="">Select Client…</option>
+                                    {clients.filter(c =>
+                                        c.id !== client.id &&
+                                        c.networks.some(nid => client.networks.includes(nid))
+                                    ).map(c => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                    ))}
+                                </select>
+                            )}
                         </div>
 
                         <input
@@ -245,13 +282,26 @@ const RulesModal: React.FC<Props> = ({ client, onClose }) => {
                     </form>
 
                     {/* Rules table */}
-                    <table className="w-full text-left bg-slate-900/30 rounded">
+                    <table className="w-full text-left bg-slate-900/30 rounded border-collapse">
+                        <thead className="bg-slate-900 text-slate-400 uppercase text-[10px] font-bold">
+                            <tr>
+                                <th className="p-3">Destination</th>
+                                <th className="p-3">Port</th>
+                                <th className="p-3">Protocol</th>
+                                <th className="p-3">Action</th>
+                                <th className="p-3 text-right">Actions</th>
+                            </tr>
+                        </thead>
                         <tbody>
                             {loading ? (
                                 <tr><td className="p-4 text-center text-slate-500">Loading…</td></tr>
                             ) : rules.map(rule => (
                                 <tr key={rule.id} className="border-t border-slate-700">
-                                    <td className="p-3 font-mono text-emerald-300">{rule.dest_cidr || 'Any'}</td>
+                                    <td className="p-3 font-mono text-emerald-300">
+                                        {rule.dest_client_id
+                                            ? clients.find(c => c.id === rule.dest_client_id)?.name || 'Unknown Client'
+                                            : (rule.dest_cidr || 'Any')}
+                                    </td>
                                     <td className="p-3">{rule.port ?? 'All'}</td>
                                     <td className="p-3 uppercase text-xs">{rule.proto}</td>
                                     <td className="p-3">{rule.action}</td>

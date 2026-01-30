@@ -18,7 +18,7 @@ interface Client {
     public_key: string;
     networks: number[];
     keepalive?: number;
-    routes?: string[];
+    routes: string[];
     enabled: boolean;
     dns_mode: 'default' | 'custom' | 'none';
     dns_servers?: string;
@@ -64,26 +64,26 @@ const ClientDetailsModal: React.FC<{
                     <div className="border-b border-slate-700 pb-4">
                         <label className="block text-sm text-slate-400 mb-3">DNS Configuration</label>
                         <div className="space-y-2">
-                            <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                            <label className="flex items-start gap-2 text-sm text-slate-300 cursor-pointer">
                                 <input
                                     type="radio"
                                     name="dnsMode"
                                     value="default"
                                     checked={dnsMode === 'default'}
                                     onChange={() => setDnsMode('default')}
-                                    className="text-emerald-500 focus:ring-emerald-500"
+                                    className="mt-1 text-emerald-500 focus:ring-emerald-500"
                                 />
                                 Use WireGuard server IPs as DNS
                             </label>
 
-                            <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                            <label className="flex items-start gap-2 text-sm text-slate-300 cursor-pointer">
                                 <input
                                     type="radio"
                                     name="dnsMode"
                                     value="custom"
                                     checked={dnsMode === 'custom'}
                                     onChange={() => setDnsMode('custom')}
-                                    className="text-blue-500 focus:ring-blue-500"
+                                    className="mt-1 text-blue-500 focus:ring-blue-500"
                                 />
                                 <div className="flex-1">
                                     <span>Custom DNS servers</span>
@@ -99,14 +99,14 @@ const ClientDetailsModal: React.FC<{
                                 </div>
                             </label>
 
-                            <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                            <label className="flex items-start gap-2 text-sm text-slate-300 cursor-pointer">
                                 <input
                                     type="radio"
                                     name="dnsMode"
                                     value="none"
                                     checked={dnsMode === 'none'}
                                     onChange={() => setDnsMode('none')}
-                                    className="text-slate-500 focus:ring-slate-500"
+                                    className="mt-1 text-slate-500 focus:ring-slate-500"
                                 />
                                 No DNS configuration
                             </label>
@@ -199,7 +199,6 @@ const ClientCard: React.FC<{
         setEditing(false);
     };
 
-    const downloadUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5000') + `/clients/${client.id}/config`;
 
     const handleToggleEnabled = async () => {
         try {
@@ -243,7 +242,6 @@ const ClientCard: React.FC<{
                             Settings
                         </button>
                     </h3>
-                    <div className="text-xs text-slate-500 font-mono mt-1 break-all">{client.public_key.substring(0, 15)}...</div>
                 </div>
                 <div className="text-right">
                     <div className="bg-slate-900 text-emerald-400 px-2 py-1 rounded font-mono text-sm font-bold border border-slate-700">

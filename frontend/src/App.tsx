@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import Networks from './pages/Networks';
 import Clients from './pages/Clients';
 import SetupWizard from './pages/SetupWizard';
+import Topology from './pages/Topology'; // Added this import
 import api from './api';
 import './App.css';
 
@@ -49,6 +50,7 @@ function App() {
         <Routes>
           <Route path="/networks" element={<Networks />} />
           <Route path="/clients" element={<Clients />} />
+          <Route path="/topology" element={<Topology />} />
           <Route path="/" element={<Navigate to="/clients" replace />} />
         </Routes>
       </Layout>

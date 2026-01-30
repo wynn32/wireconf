@@ -83,7 +83,7 @@ class ConfigRenderer:
         return "\n".join(conf)
 
     @staticmethod
-    def render_client_config(client: Client, server_public_key: str, server_endpoint: str, routed_cidrs: list[str] = None) -> str:
+    def render_client_config(client: Client, server_public_key: str, server_endpoint: str, other_routes: list[str] = None) -> str:
         """
         Renders a WireGuard client configuration file.
         
@@ -91,7 +91,7 @@ class ConfigRenderer:
             client: Client object with networks, keys, and DNS settings
             server_public_key: Server's public key
             server_endpoint: Server endpoint (e.g. "vpn.example.com:51820")
-            routed_cidrs: List of CIDRs that should be routed through the VPN (from other router clients)
+            other_routes: List of CIDRs that this client should have access to (behind OTHER clients)
         
         Returns:
             Complete client configuration as string
@@ -122,13 +122,13 @@ class ConfigRenderer:
         
         # AllowedIPs: 
         # 1. Networks the client is part of (VPN subnets)
-        # 2. Routed networks (subnets behind other clients)
+        # 2. Other routed networks (subnets behind OTHER clients)
         
         allowed_ips_list = [n.cidr for n in client.networks]
         
-        # Add global routes (avoid specific duplicates, though WG handles overlap fine)
-        if routed_cidrs:
-            for cidr in routed_cidrs:
+        # Add access to networks behind other clients
+        if other_routes:
+            for cidr in other_routes:
                 if cidr not in allowed_ips_list:
                     allowed_ips_list.append(cidr)
         
@@ -138,15 +138,17 @@ class ConfigRenderer:
         pka_line = f"PersistentKeepalive = {client.keepalive}\n" if client.keepalive else ""
         
         
-        # Router Mode Configuration
+        # Router Mode Configuration (Only for this client's OWN routes)
         post_up_cmds = []
         post_down_cmds = []
         
-        if routed_cidrs:
+        own_routes = [r.target_cidr for r in client.routes]
+        
+        if own_routes:
             # Enable IP Forwarding
             post_up_cmds.append("sysctl -w net.ipv4.ip_forward=1")
             
-            for cidr in routed_cidrs:
+            for cidr in own_routes:
                 # Script to find interface for CIDR and apply NAT
                 # We use a shell one-liner. %i is the WG interface name.
                 
@@ -244,32 +246,39 @@ PresharedKey = {client.preshared_key}
             else:
                 source_ips = [None] 
 
-            dest_cidr = rule.dest_cidr
-            
+            # Resolve Destination IPs
+            dest_ips = []
+            if rule.dest_client_id:
+                dest_client = next((c for c in clients if c.id == rule.dest_client_id), None)
+                if dest_client:
+                    for net in dest_client.networks:
+                        dest_ips.append(IPManager.get_client_ip(net, dest_client))
+            elif rule.dest_cidr:
+                dest_ips = [rule.dest_cidr]
+            else:
+                dest_ips = [None]
+
             for src_ip in source_ips:
-                cmd_parts = []
-                # Remove -i wg0 from here if we assume the chain is jumped to safely?
-                # But for safety, we should keep strict matching in the rule or in the jump.
-                # Let's keep strict matching in the rule for now, targetting the CHAIN.
-                
-                cmd_parts.append(f"-A {CHAIN_NAME}")
-                cmd_parts.append("-i wg0")
-                
-                if src_ip:
-                    cmd_parts.append(f"-s {src_ip}")
-                
-                if dest_cidr:
-                    cmd_parts.append(f"-d {dest_cidr}")
+                for d_ip in dest_ips:
+                    cmd_parts = []
+                    cmd_parts.append(f"-A {CHAIN_NAME}")
+                    cmd_parts.append("-i wg0")
                     
-                if rule.proto:
-                    cmd_parts.append(f"-p {rule.proto}")
-                
-                if rule.port and rule.proto in ['tcp', 'udp']:
-                    cmd_parts.append(f"--dport {rule.port}")
+                    if src_ip:
+                        cmd_parts.append(f"-s {src_ip}")
                     
-                cmd_parts.append(f"-j {rule.action}")
-                
-                up.append(f"iptables {' '.join(cmd_parts)}")
+                    if d_ip:
+                        cmd_parts.append(f"-d {d_ip}")
+                        
+                    if rule.proto and rule.proto != 'all':
+                        cmd_parts.append(f"-p {rule.proto}")
+                    
+                    if rule.port and rule.proto in ['tcp', 'udp']:
+                        cmd_parts.append(f"--dport {rule.port}")
+                        
+                    cmd_parts.append(f"-j {rule.action}")
+                    
+                    up.append(f"iptables {' '.join(cmd_parts)}")
 
         # --- PostDown ---
         # 1. Remove Jump

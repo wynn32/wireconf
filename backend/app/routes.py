@@ -111,6 +111,20 @@ def create_network():
     db.session.commit()
     return jsonify({'id': net.id}), 201
 
+@bp.route('/networks/<int:network_id>', methods=['DELETE'])
+def delete_network(network_id):
+    net = db.session.get(Network, network_id)
+    if not net:
+        return jsonify({'error': 'Network not found'}), 404
+        
+    # The association table will be handled by SQLAlchemy relationship 
+    # but we can be explicit or rely on the backref.
+    # Note: clients will still exist, just lose this network.
+    
+    db.session.delete(net)
+    db.session.commit()
+    return jsonify({'status': 'deleted'}), 200
+
 @bp.route('/clients', methods=['GET'])
 def get_clients():
     clients = Client.query.all()
@@ -308,20 +322,12 @@ def create_client_rule(public_key):
     
     destination = data.get('destination') # e.g. "10.0.1.5" or "192.168.1.0/24"
     dest_type = data.get('destination_type', 'host')
-    
-    dest_cidr = None
-    dest_client_id = None
-    
-    # Simple logic: if destination matches a known client IP, could link to client ID?
-    # Or just trust user input as CIDR. User said "rules should enable access to hosts via port, ip, or network"
-    # User said DTO has "destination" (e.g. 10.0.1.2/32).
-    # We will treat 'destination' as dest_cidr for raw rules.
-    
-    dest_cidr = destination
+    dest_client_id = data.get('dest_client_id')
     
     rule = AccessRule(
         source_client_id=client.id,
-        dest_cidr=dest_cidr,
+        dest_cidr=destination,
+        dest_client_id=dest_client_id,
         destination_type=dest_type,
         port=data.get('port'),
         proto=data.get('proto', 'udp').lower(),
@@ -340,6 +346,20 @@ def delete_rule(rule_id):
     db.session.commit()
     return jsonify({'status': 'deleted'}), 200
 
+@bp.route('/rules', methods=['GET'])
+def get_all_rules():
+    rules = AccessRule.query.all()
+    return jsonify([{
+        'id': r.id,
+        'source_client_id': r.source_client_id,
+        'dest_client_id': r.dest_client_id,
+        'dest_cidr': r.dest_cidr,
+        'destination_type': r.destination_type,
+        'port': r.port,
+        'proto': r.proto,
+        'action': r.action
+    } for r in rules])
+
 @bp.route('/clients/<int:client_id>/config', methods=['GET'])
 def download_client_config(client_id):
     client = db.session.get(Client, client_id)
@@ -354,13 +374,13 @@ def download_client_config(client_id):
     server_public_key = server_config.server_public_key
     server_endpoint = f"{server_config.server_endpoint}:{server_config.server_port}"
     
-    # Fetch all routed CIDRs from all clients
+    # Fetch all routed CIDRs from OTHER clients
     # This allows this client to access networks behind OTHER clients
-    all_routes = Route.query.all()
-    routed_cidrs = [r.target_cidr for r in all_routes]
+    all_routes = Route.query.filter(Route.via_client_id != client.id).all()
+    other_routes = [r.target_cidr for r in all_routes]
     
     # Use the new render_client_config method
-    config = ConfigRenderer.render_client_config(client, server_public_key, server_endpoint, routed_cidrs)
+    config = ConfigRenderer.render_client_config(client, server_public_key, server_endpoint, other_routes)
     
     return send_file(
         io.BytesIO(config.encode('utf-8')),
@@ -368,6 +388,85 @@ def download_client_config(client_id):
         as_attachment=True,
         download_name=f"{client.name}.conf"
     )
+
+@bp.route('/commit/preview', methods=['GET'])
+def commit_preview():
+    # 1. Fetch current DB state
+    networks = Network.query.all()
+    clients = Client.query.all()
+    rules = AccessRule.query.all()
+    server_config = SetupManager.get_server_config()
+    
+    new_conf = ConfigRenderer.render_wg_conf(
+        server_config.server_private_key, 
+        server_config.server_port, 
+        networks, clients, rules
+    )
+    
+    # 2. Comparison Logic
+    config_path = os.environ.get("WG_CONFIG_PATH", "wg0_generated.conf")
+    old_conf = ""
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            old_conf = f.read()
+    
+    # Simplified Diff Summary
+    summary = {
+        'added_clients': [],
+        'removed_clients': [],
+        'modified_interface': False
+    }
+    
+    # Basic string diff for Interface
+    def get_iface(c):
+        lines = []
+        for l in c.splitlines():
+            if l.startswith("### begin"): break
+            lines.append(l)
+        return "\n".join(lines).strip()
+        
+    if get_iface(old_conf) != get_iface(new_conf):
+        summary['modified_interface'] = True
+        
+    # Peers diff
+    def get_peers(c):
+        # returns dict {public_key: full_text_of_block}
+        peers = {}
+        parts = c.split("### begin ")
+        for p in parts[1:]:
+            name_part = p.split(" ###")[0]
+            # Peer block ends with "### end Name ###"
+            # Actually we can just key by the name or extracted pubkey
+            lines = p.splitlines()
+            pubkey = None
+            for l in lines:
+                if l.startswith("PublicKey ="):
+                    pubkey = l.split("=")[1].strip()
+                    break
+            if pubkey:
+                peers[pubkey] = p.split(f"### end {name_part} ###")[0].strip()
+        return peers
+
+    old_peers = get_peers(old_conf)
+    new_peers = get_peers(new_conf)
+    
+    for pk in new_peers:
+        if pk not in old_peers:
+            client = next((c for c in clients if c.public_key == pk), None)
+            if client:
+                summary['added_clients'].append({'name': client.name, 'id': client.id})
+            else:
+                summary['added_clients'].append({'name': pk, 'id': None})
+            
+    for pk in old_peers:
+        if pk not in new_peers:
+            summary['removed_clients'].append(pk[:8] + "...")
+            
+    return jsonify({
+        'summary': summary,
+        'new_config': new_conf,
+        'full_restart_needed': summary['modified_interface']
+    })
 
 from .system_service import SystemService
 import os
@@ -394,11 +493,38 @@ def commit_changes():
     config_path = os.environ.get("WG_CONFIG_PATH", "wg0_generated.conf")
     
     try:
-        SystemService.restart_service(conf_content, config_path=config_path)
-        status = 'committed'
+        # Smart Restart/Reload Logic
+        full_restart_needed = True
+        
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                old_content = f.read()
+            
+            # Extract Interface section (up to first client marker)
+            def get_interface_part(content):
+                lines = []
+                for line in content.splitlines():
+                    if line.startswith("### begin"):
+                        break
+                    lines.append(line)
+                return "\n".join(lines).strip()
+            
+            old_interface = get_interface_part(old_content)
+            new_interface = get_interface_part(conf_content)
+            
+            if old_interface == new_interface:
+                full_restart_needed = False
+        
+        if full_restart_needed:
+            print("Performing FULL RESTART (Interface/Rules changed)")
+            SystemService.restart_service(conf_content, config_path=config_path)
+            status = 'committed (full restart)'
+        else:
+            print("Performing HOT RELOAD (Peers changed)")
+            SystemService.reload_service(conf_content, config_path=config_path)
+            status = 'committed (hot reload)'
+            
     except Exception as e:
-        # In dev, this might fail if wg-quick is missing, but file is written.
-        # We catch to allow verification to pass if just verifying logic.
         status = f'committed_with_warning: {str(e)}'
         
     return jsonify({'status': status, 'file': config_path})

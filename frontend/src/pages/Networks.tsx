@@ -28,6 +28,16 @@ const Networks: React.FC = () => {
         fetchNetworks();
     }, []);
 
+    const handleDelete = async (id: number, name: string) => {
+        if (!confirm(`Are you sure you want to delete network "${name}"? This will remove all associated firewall rules and client assignments.`)) return;
+        try {
+            await api.delete(`/networks/${id}`);
+            fetchNetworks();
+        } catch (err: any) {
+            alert(`Failed to delete network: ${err.response?.data?.error || err.message}`);
+        }
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
@@ -90,6 +100,7 @@ const Networks: React.FC = () => {
                                 <th className="p-4">Name</th>
                                 <th className="p-4">CIDR</th>
                                 <th className="p-4">Interface Address</th>
+                                <th className="p-4 text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-700">
@@ -101,6 +112,14 @@ const Networks: React.FC = () => {
                                     <td className="p-4 font-medium text-slate-200">{net.name}</td>
                                     <td className="p-4 font-mono text-emerald-400">{net.cidr}</td>
                                     <td className="p-4 font-mono text-blue-400">{net.interface_address}</td>
+                                    <td className="p-4 text-right">
+                                        <button
+                                            onClick={() => handleDelete(net.id, net.name)}
+                                            className="text-red-400 hover:text-red-300 text-sm font-medium transition-colors"
+                                        >
+                                            Delete
+                                        </button>
+                                    </td>
                                 </tr>
                             ))}
                             {!loading && networks.length === 0 && (
