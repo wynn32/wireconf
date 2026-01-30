@@ -44,6 +44,7 @@ rm -rf "$DIST_DIR/backend/wireguard.db" # Don't bundle dev DB
 
 # Copy Scripts
 cp "$REPO_ROOT/scripts/installer.sh" "$DIST_DIR/scripts/"
+cp "$REPO_ROOT/scripts/setup_cli.py" "$DIST_DIR/scripts/"
 cp "$REPO_ROOT/scripts/bootstrap.sh" "$DIST_DIR/"
 
 # 3. Zip everything

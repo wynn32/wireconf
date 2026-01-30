@@ -200,6 +200,25 @@ else
     systemctl restart nginx
 fi
 
+# Interactive Setup
+echo "================================================"
+echo "  Interactive Setup"
+echo "================================================"
+if [ -t 0 ]; then
+    read -p "Would you like to run the setup wizard now? [Y/n] " -r
+    echo
+    if [[ -z "$REPLY" || "$REPLY" =~ ^[Yy]$ ]]; then
+        echo "Running setup wizard..."
+        # Ensure we are in the backend directory so that database location (if relative) is consistent
+        # And set PYTHONPATH so that the script can import 'app'
+        cd "$BACKEND_DIR"
+        export PYTHONPATH="$BACKEND_DIR"
+        "$VENV_DIR/bin/python3" "../scripts/setup_cli.py"
+    fi
+else
+    echo "Non-interactive shell detected, skipping wizard."
+fi
+
 echo "================================================"
 echo "  Installation/Update Complete!"
 echo "  Accessible at http://127.0.0.1"
