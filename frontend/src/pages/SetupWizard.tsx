@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
+import ImportModal from '../components/ImportModal';
 
 interface Network {
     id: number;
@@ -36,6 +37,9 @@ const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
 
     const [completing, setCompleting] = useState(false);
 
+    const [hasExistingConfig, setHasExistingConfig] = useState(false);
+    const [extractedConfig, setExtractedConfig] = useState<{ server_data: any, peers: any[] } | null>(null);
+
     useEffect(() => {
         checkInstallStatus();
     }, []);
@@ -44,11 +48,47 @@ const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
         try {
             const res = await api.get('/setup/status');
             setInstalled(res.data.installed);
-            if (res.data.installed) {
+            setHasExistingConfig(res.data.has_existing_host_config);
+
+            // If already setup complete, go to dashboard (this is handled by parent usually, but good to have)
+            // If installed but NOT setup, stay here.
+            // If user wants to skip step 1 if installed, we only do it if NO existing config to import.
+            if (res.data.installed && !res.data.has_existing_host_config) {
                 setStep(2);
             }
         } catch (err) {
             console.error('Failed to check install status', err);
+        }
+    };
+
+    const handleFetchHostConfig = async () => {
+        try {
+            const res = await api.get('/setup/extract-host-config');
+            // Add a temporary 'private_key' field for editing
+            const peers = res.data.peers.map((p: any) => ({
+                ...p,
+                privatekey: ''
+            }));
+            setExtractedConfig({ server_data: res.data.server_data, peers });
+            setStep(10); // Special step for manual peer import
+        } catch (err) {
+            alert('Failed to extract host config');
+        }
+    };
+
+    const handleImportManual = async () => {
+        if (!extractedConfig) return;
+        setCompleting(true);
+        try {
+            await api.post('/setup/import-manual', {
+                server_data: extractedConfig.server_data,
+                peers: extractedConfig.peers,
+                force_purge: true
+            });
+            onComplete();
+        } catch (err: any) {
+            alert(err.response?.data?.error || 'Manual import failed');
+            setCompleting(false);
         }
     };
 
@@ -57,6 +97,8 @@ const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
         try {
             await api.post('/setup/install');
             setInstalled(true);
+            const res = await api.get('/setup/status');
+            setHasExistingConfig(res.data.has_existing_host_config);
             setTimeout(() => setInstalling(false), 1000);
         } catch (err) {
             alert('Installation marking failed. Please run install.sh manually.');
@@ -150,14 +192,14 @@ const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
                 {/* Header */}
                 <div className="bg-gradient-to-r from-emerald-600 to-blue-600 p-6 rounded-t-2xl">
                     <h1 className="text-3xl font-bold text-white">WireGuard Setup Wizard</h1>
-                    <p className="text-emerald-100 mt-2">Step {step} of 5</p>
+                    <p className="text-emerald-100 mt-2">Step {step > 5 ? 'Import' : `${step} of 5`}</p>
                 </div>
 
                 {/* Progress Bar */}
                 <div className="bg-slate-900 h-2">
                     <div
                         className="bg-emerald-500 h-full transition-all duration-300"
-                        style={{ width: `${(step / 5) * 100}%` }}
+                        style={{ width: step > 5 ? '100%' : `${(step / 5) * 100}%` }}
                     />
                 </div>
 
@@ -181,6 +223,37 @@ const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
                                 </ul>
                             </div>
 
+                            {installed && hasExistingConfig && (
+                                <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-6 space-y-4">
+                                    <h3 className="text-xl font-bold text-blue-400">Existing Configuration Detected</h3>
+                                    <p className="text-slate-300 text-sm">
+                                        We found an existing WireGuard configuration on this host. How would you like to proceed?
+                                    </p>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                        <button
+                                            onClick={handleFetchHostConfig}
+                                            className="p-4 bg-slate-900 border border-slate-700 rounded-lg hover:border-emerald-500 transition-colors text-left group"
+                                        >
+                                            <div className="text-white font-bold group-hover:text-emerald-400">Import Host Config</div>
+                                            <div className="text-xs text-slate-400 mt-1">Import peers from wg0.conf and provide private keys.</div>
+                                        </button>
+                                        <button
+                                            onClick={() => setStep(11)} // Step 11 for PiVPN upload
+                                            className="p-4 bg-slate-900 border border-slate-700 rounded-lg hover:border-emerald-500 transition-colors text-left group"
+                                        >
+                                            <div className="text-white font-bold group-hover:text-emerald-400">Import PiVPN Backup</div>
+                                            <div className="text-xs text-slate-400 mt-1">Upload a .tgz backup file from PiVPN.</div>
+                                        </button>
+                                    </div>
+                                    <button
+                                        onClick={() => setStep(2)}
+                                        className="w-full py-2 text-slate-400 hover:text-white text-sm underline"
+                                    >
+                                        Start Fresh (Overwrite existing)
+                                    </button>
+                                </div>
+                            )}
+
                             {!installed ? (
                                 <div className="bg-amber-900/30 border border-amber-700 rounded-lg p-4">
                                     <p className="text-amber-200 mb-4">
@@ -194,22 +267,26 @@ const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
                                     </p>
                                 </div>
                             ) : (
-                                <div className="bg-emerald-900/30 border border-emerald-700 rounded-lg p-4">
-                                    <p className="text-emerald-200">
-                                        ✓ System dependencies are installed!
-                                    </p>
-                                </div>
+                                !hasExistingConfig && (
+                                    <div className="bg-emerald-900/30 border border-emerald-700 rounded-lg p-4">
+                                        <p className="text-emerald-200">
+                                            ✓ System dependencies are installed!
+                                        </p>
+                                    </div>
+                                )
                             )}
 
                             <div className="flex justify-between">
                                 <div></div>
                                 {installed ? (
-                                    <button
-                                        onClick={() => setStep(2)}
-                                        className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg font-medium"
-                                    >
-                                        Next →
-                                    </button>
+                                    !hasExistingConfig && (
+                                        <button
+                                            onClick={() => setStep(2)}
+                                            className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg font-medium"
+                                        >
+                                            Next →
+                                        </button>
+                                    )
                                 ) : (
                                     <button
                                         onClick={handleInstall}
@@ -513,6 +590,76 @@ const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
                                     {completing ? 'Completing...' : 'Complete Setup ✓'}
                                 </button>
                             </div>
+                        </div>
+                    )}
+
+                    {/* Step 10: Manual Peer Import */}
+                    {step === 10 && extractedConfig && (
+                        <div className="space-y-6">
+                            <h2 className="text-2xl font-bold text-white">Provide Client Private Keys</h2>
+                            <p className="text-slate-300 text-sm">
+                                The server configuration only contains public keys. To allow this system to manage clients (and for clients to connect), please provide their private keys if you have them.
+                            </p>
+
+                            <div className="max-h-96 overflow-y-auto border border-slate-700 rounded-lg">
+                                <table className="w-full text-left text-sm">
+                                    <thead className="bg-slate-900 sticky top-0">
+                                        <tr>
+                                            <th className="p-3 text-slate-400 font-medium">Client</th>
+                                            <th className="p-3 text-slate-400 font-medium">Public Key</th>
+                                            <th className="p-3 text-slate-400 font-medium">Private Key (Optional)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-700">
+                                        {extractedConfig.peers.map((peer, idx) => (
+                                            <tr key={idx} className="bg-slate-800/50">
+                                                <td className="p-3 text-white font-medium">{peer.name || peer._comment_name || 'Unnamed'}</td>
+                                                <td className="p-3 font-mono text-xs text-slate-400">{peer.publickey?.substring(0, 10)}...</td>
+                                                <td className="p-3">
+                                                    <input
+                                                        type="text"
+                                                        value={peer.privatekey || ''}
+                                                        onChange={(e) => {
+                                                            const newPeers = [...extractedConfig.peers];
+                                                            newPeers[idx].privatekey = e.target.value;
+                                                            setExtractedConfig({ ...extractedConfig, peers: newPeers });
+                                                        }}
+                                                        placeholder="Enter private key..."
+                                                        className="w-full bg-slate-900 border border-slate-700 rounded p-1.5 text-xs text-white focus:border-emerald-500 outline-none"
+                                                    />
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="flex justify-between mt-6">
+                                <button
+                                    onClick={() => setStep(1)}
+                                    className="text-slate-400 hover:text-white px-6 py-2"
+                                    disabled={completing}
+                                >
+                                    ← Back
+                                </button>
+                                <button
+                                    onClick={handleImportManual}
+                                    disabled={completing}
+                                    className="bg-emerald-600 hover:bg-emerald-700 text-white px-6 py-2 rounded-lg font-bold disabled:opacity-50"
+                                >
+                                    {completing ? 'Importing...' : 'Import Configuration ✓'}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Step 11: PiVPN Import Modal Flow */}
+                    {step === 11 && (
+                        <div className="fixed inset-0 z-[60]">
+                            <ImportModal
+                                onClose={() => setStep(1)}
+                                onSuccess={() => onComplete()}
+                            />
                         </div>
                     )}
                 </div>

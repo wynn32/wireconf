@@ -70,6 +70,43 @@ def complete_setup():
     
     return jsonify({'status': 'setup_complete'})
 
+@bp.route('/setup/extract-host-config', methods=['GET'])
+def extract_host_config():
+    """Reads and parses the host's current WireGuard config."""
+    config_path = os.environ.get("WG_CONFIG_PATH", "/etc/wireguard/wg0.conf")
+    if not os.path.exists(config_path):
+        return jsonify({'error': 'Config file not found'}), 404
+        
+    try:
+        with open(config_path, "r") as f:
+            content = f.read()
+        
+        server_data, peers = ConfigImporter._parse_ini_content(content)
+        # We only need enough info for the user to identify peers (name/comment, pubkey, allowedips)
+        return jsonify({
+            'server_data': server_data,
+            'peers': peers
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@bp.route('/setup/import-manual', methods=['POST'])
+def import_manual():
+    """Performs import with user-provided private keys."""
+    data = request.json
+    server_data = data.get('server_data', {})
+    peers = data.get('peers', [])
+    force_purge = data.get('force_purge', False)
+    
+    try:
+        stats = ConfigImporter._import_to_db(server_data, peers, force_purge=force_purge)
+        return jsonify({
+            'status': 'success',
+            'stats': stats
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @bp.route('/import', methods=['POST'])
 def import_config():
     """Import existing wg0.conf file or PiVPN backup (.tgz)."""
