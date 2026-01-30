@@ -5,7 +5,11 @@ from .key_manager import KeyManager
 from .config_renderer import ConfigRenderer
 from .setup_manager import SetupManager
 from .importer import ConfigImporter
+from .system_service import SystemService
 import io
+import time
+import datetime
+import os
 
 bp = Blueprint('api', __name__, url_prefix='/api')
 
@@ -187,6 +191,89 @@ def derive_public_key():
         return jsonify({'public_key': public_key})
     except Exception as e:
         return jsonify({'error': str(e)}), 400
+
+
+@bp.route('/wireguard/status', methods=['GET'])
+def get_wireguard_status():
+    """
+    Get live status of WireGuard peers.
+    Executes `wg show all dump` and maps it to DB clients.
+    """
+    # 1. Fetch all clients from DB for mapping
+    clients = Client.query.all()
+    client_map = {c.public_key: c for c in clients}
+    
+    peer_stats = {}
+    
+    try:
+        # 2. Run wg show all dump
+        # Output format: interface, public-key, preshared-key, endpoint, allowed-ips, latest-handshake, transfer-rx, transfer-tx, persistent-keepalive
+        result = SystemService.get_status_dump()
+        
+        if result.returncode != 0:
+            # If wg command fails (e.g. not root, or wg not installed), return empty stats but valid JSON
+            print(f"Error running wg show: {result.stderr}")
+            # We still want to return the client list, just with offline status
+        else:
+            lines = result.stdout.strip().split('\n')
+            for line in lines:
+                parts = line.split('\t')
+                if len(parts) < 8:
+                    continue
+                    
+                # Skip the interface line itself (it doesn't have a public key usually in the same slot, or is identified uniquely)
+                # 'wg show all dump' first line is usually the interface itself if just 'wg show dump'
+                # But 'all dump' format: interface \t public-key ...
+                # If it's the interface definition, public-key column is the private key (hidden) or similar? 
+                # Actually for interface line: interface, private-key, public-key, listen-port, fwmark
+                # For peer line: interface, public-key, preshared-key, endpoint, allowed-ips, latest-handshake, transfer-rx, transfer-tx, persistent-keepalive
+                
+                # We can distinguish by length or by checking if the second column matches a client public key
+                
+                pub_key = parts[1]
+                
+                if pub_key in client_map:
+                    endpoint = parts[3]
+                    latest_handshake = int(parts[5])
+                    transfer_rx = int(parts[6])
+                    transfer_tx = int(parts[7])
+                    
+                    peer_stats[pub_key] = {
+                        'endpoint': endpoint,
+                        'latest_handshake': latest_handshake,
+                        'transfer_rx': transfer_rx,
+                        'transfer_tx': transfer_tx,
+                        'is_active': (time.time() - latest_handshake) < 180 if latest_handshake > 0 else False
+                    }
+                    
+    except Exception as e:
+        print(f"Exception fetching wg stats: {e}")
+        
+    # 3. Construct response combining DB info and live stats
+    response = []
+    
+    for client in clients:
+        stats = peer_stats.get(client.public_key, {
+            'endpoint': '(none)',
+            'latest_handshake': 0,
+            'transfer_rx': 0,
+            'transfer_tx': 0,
+            'is_active': False
+        })
+        
+        response.append({
+            'id': client.id,
+            'name': client.name,
+            'public_key': client.public_key,
+            'endpoint': stats['endpoint'],
+            'latest_handshake': stats['latest_handshake'],
+            'transfer_rx': stats['transfer_rx'],
+            'transfer_tx': stats['transfer_tx'],
+            'is_active': stats['is_active'],
+            'enabled': client.enabled
+        })
+        
+    return jsonify(response)
 
 # ============================================================================
 # NETWORK ENDPOINTS
@@ -658,8 +745,7 @@ def commit_preview():
         'full_restart_needed': summary['modified_interface']
     })
 
-from .system_service import SystemService
-import os
+
 
 def _perform_commit():
     """Helper to render and apply server configuration."""

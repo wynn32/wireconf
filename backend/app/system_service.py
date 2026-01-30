@@ -119,3 +119,17 @@ class SystemService:
             SystemService._run_command(["systemctl", "start", service_name], check=True)
         else:
             SystemService._run_command(["wg-quick", "up", interface_name], check=True)
+
+    @staticmethod
+    def get_status_dump():
+        """
+        Get wg show all dump output.
+        Returns subprocess.CompletedProcess
+        """
+        try:
+            wg_path = get_command_path("wg")
+            return subprocess.run([wg_path, "show", "all", "dump"], capture_output=True, text=True)
+        except Exception as e:
+            # Fallback/mock for empty result if command missing
+            print(f"Failed to run wg show: {e}")
+            return subprocess.CompletedProcess(args=[], returncode=1, stderr=str(e))

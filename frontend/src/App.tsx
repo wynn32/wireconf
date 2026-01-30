@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Layout from './components/Layout';
 import Networks from './pages/Networks';
 import Clients from './pages/Clients';
+import LiveStatus from './pages/LiveStatus';
 import SetupWizard from './pages/SetupWizard';
 import Topology from './pages/Topology';
 import ServerSettings from './pages/ServerSettings';
@@ -51,6 +52,7 @@ function App() {
         <Routes>
           <Route path="/networks" element={<Networks />} />
           <Route path="/clients" element={<Clients />} />
+          <Route path="/status" element={<LiveStatus />} />
           <Route path="/topology" element={<Topology />} />
           <Route path="/settings" element={<ServerSettings />} />
           <Route path="/" element={<Navigate to="/clients" replace />} />
