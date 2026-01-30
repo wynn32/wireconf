@@ -297,11 +297,6 @@ PresharedKey = {client.preshared_key}
                     
                     up.append(f"{iptables_path} {' '.join(cmd_parts)}")
 
-        # Add explicit catch-all DROP rule at the end of the temp chain
-        # This ensures any packet that doesn't match a rule is explicitly dropped
-        # in the chain itself rather than relying on implicit behavior
-        up.append(f"{iptables_path} -A {TEMP_CHAIN} -j DROP")
-
         # 3. Atomic Swap
         # We insert TEMP_CHAIN, then remove OLD, then rename TEMP to OLD.
         # This replaces the entire rule set with practically zero gap.
