@@ -302,6 +302,9 @@ PresharedKey = {client.preshared_key}
         # 3. Delete Chain
         down.append(f"iptables -X {CHAIN_NAME} 2>/dev/null || true")
         
+        # 4. Restore Default Policy (Avoid lockout)
+        down.append("iptables -P FORWARD ACCEPT")
+        
         # Also cleanup global rules if we added them?
         # Providing strict symmetry for global rules is tricky if they are generic.
         # We can leave P FORWARD DROP? Or try to restore?

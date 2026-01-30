@@ -21,12 +21,7 @@ class SetupManager:
     @staticmethod
     def is_installed():
         """Check if system dependencies are installed."""
-        # Check for installation marker file
-        marker_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.installed')
-        if os.path.exists(marker_path):
-            return True
-        
-        # Also check database flag
+        # Helper relies purely on DB flag now
         config = SetupManager.get_server_config()
         return config.installed
     

@@ -38,14 +38,6 @@ class ConfigImporter:
                 server_content = tar.extractfile(server_conf_path).read().decode('utf-8')
                 server_data, server_peers = ConfigImporter._parse_ini_content(server_content)
 
-                # Extract authorized client public keys and their assigned tunnel IPs (AllowedIPs)
-                # This is the most reliable source for the client's tunnel address in PiVPN
-                authorized_clients = {} # pub_key -> allowed_ips_str
-                for p in server_peers:
-                    pk = p.get('publickey')
-                    if pk:
-                        authorized_clients[pk] = p.get('allowedips')
-
                 # 2. Key Mismatch Check
                 current_config = SetupManager.get_server_config()
                 imported_pk = server_data.get('privatekey')
@@ -58,49 +50,48 @@ class ConfigImporter:
                                 'message': 'Imported server key does not match current key. Purge database and continue?'
                             }
 
-                # 3. Find Client Configs
-                # PiVPN backup structure: home/<user>/configs/*.conf
-                client_peers = []
+                # Prepare base peers from server config
+                # We'll key them by public key for easier enrichment
+                peers_map = {}
+                for p in server_peers:
+                    pk = p.get('publickey')
+                    if pk:
+                        # Normalize keys for fallback logic
+                        p['presharedkey'] = p.get('presharedkey')
+                        p['allowedips'] = p.get('allowedips')
+                        peers_map[pk] = p
+
+                # 3. Find and Parse Client Configs to enrich with Private Keys
                 for member in tar.getmembers():
-                    if member.name.endswith('.conf') and 'configs/' in member.name:
-                        # Skip wg0.conf if it was caught here
+                    # More flexible check: any .conf file that isn't the server config
+                    if member.name.endswith('.conf') and not member.isdir():
                         if member.name == server_conf_path:
                             continue
                         
-                        client_content = tar.extractfile(member).read().decode('utf-8')
-                        client_data, peers = ConfigImporter._parse_ini_content(client_content)
-                        
-                        if not client_data.get('privatekey'):
-                            continue # Not a valid client config
-                        
-                        client_pub = KeyManager.generate_public_key(client_data.get('privatekey'))
-                        
-                        # SMART FILTER: Skip if not in server's peer list
-                        if client_pub not in authorized_clients:
+                        try:
+                            client_content = tar.extractfile(member).read().decode('utf-8')
+                            client_data, _ = ConfigImporter._parse_ini_content(client_content)
+                            
+                            priv_key = client_data.get('privatekey')
+                            if not priv_key:
+                                continue
+                            
+                            client_pub = KeyManager.generate_public_key(priv_key)
+                            
+                            if client_pub in peers_map:
+                                # Enrich existing peer with private key and server address
+                                peers_map[client_pub]['privatekey'] = priv_key
+                                # Address in client config is usually the IP it uses on the interface
+                                if client_data.get('address'):
+                                    peers_map[client_pub]['address'] = client_data.get('address')
+                        except:
                             continue
 
-                        # Robust Octet Derivation: 
-                        # Use Preferred IP from server configuration if available
-                        server_side_address = authorized_clients[client_pub]
-                        
-                        # We only expect ONE [Peer] in a client config (the server)
-                        first_peer = peers[0] if peers else {}
-                        
-                        client_name = os.path.basename(member.name).replace('.conf', '')
-                        
-                        client_peers.append({
-                            'name': client_name,
-                            'privatekey': client_data.get('privatekey'),
-                            'address': server_side_address or client_data.get('address'),
-                            'publickey': client_pub,
-                            'presharedkey': first_peer.get('presharedkey'),
-                            'allowedips': first_peer.get('allowedips'),
-                            'persistentkeepalive': first_peer.get('persistentkeepalive')
-                        })
+                final_peers = list(peers_map.values())
 
                 return {
                     'status': 'success',
-                    'stats': ConfigImporter._import_to_db(server_data, client_peers, force_purge=force_purge)
+                    'stats': ConfigImporter._import_to_db(server_data, final_peers, force_purge=force_purge)
                 }
         except Exception as e:
             raise e
