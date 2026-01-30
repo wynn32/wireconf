@@ -36,7 +36,15 @@ class ConfigImporter:
                     raise Exception("Server configuration (wg0.conf) not found in backup.")
 
                 server_content = tar.extractfile(server_conf_path).read().decode('utf-8')
-                server_data, _ = ConfigImporter._parse_ini_content(server_content)
+                server_data, server_peers = ConfigImporter._parse_ini_content(server_content)
+
+                # Extract authorized client public keys and their assigned tunnel IPs (AllowedIPs)
+                # This is the most reliable source for the client's tunnel address in PiVPN
+                authorized_clients = {} # pub_key -> allowed_ips_str
+                for p in server_peers:
+                    pk = p.get('publickey')
+                    if pk:
+                        authorized_clients[pk] = p.get('allowedips')
 
                 # 2. Key Mismatch Check
                 current_config = SetupManager.get_server_config()
@@ -62,35 +70,29 @@ class ConfigImporter:
                         client_content = tar.extractfile(member).read().decode('utf-8')
                         client_data, peers = ConfigImporter._parse_ini_content(client_content)
                         
-                        # Client data is in [Interface], server is in [Peer]
                         if not client_data.get('privatekey'):
                             continue # Not a valid client config
                         
+                        client_pub = KeyManager.generate_public_key(client_data.get('privatekey'))
+                        
+                        # SMART FILTER: Skip if not in server's peer list
+                        if client_pub not in authorized_clients:
+                            continue
+
+                        # Robust Octet Derivation: 
+                        # Use Preferred IP from server configuration if available
+                        server_side_address = authorized_clients[client_pub]
+                        
                         # We only expect ONE [Peer] in a client config (the server)
-                        # But we care about the [Interface] for the client's own keys and AllowedIPs (from Peer)
-                        # Actually, PiVPN client configs have AllowedIPs in the [Peer] block (server)
-                        # pointing to what the client can access.
+                        first_peer = peers[0] if peers else {}
                         
                         client_name = os.path.basename(member.name).replace('.conf', '')
-                        
-                        # PiVPN client config structure:
-                        # [Interface]
-                        # PrivateKey = ...
-                        # Address = ...
-                        #
-                        # [Peer]
-                        # PublicKey = <server_pub>
-                        # AllowedIPs = ...
-                        # PersistentKeepalive = ...
-                        
-                        # We need to extract AllowedIPs and Keepalive from the FIRST peer (the server)
-                        first_peer = peers[0] if peers else {}
                         
                         client_peers.append({
                             'name': client_name,
                             'privatekey': client_data.get('privatekey'),
-                            'address': client_data.get('address'),
-                            'publickey': KeyManager.generate_public_key(client_data.get('privatekey')),
+                            'address': server_side_address or client_data.get('address'),
+                            'publickey': client_pub,
                             'presharedkey': first_peer.get('presharedkey'),
                             'allowedips': first_peer.get('allowedips'),
                             'persistentkeepalive': first_peer.get('persistentkeepalive')
@@ -238,23 +240,23 @@ class ConfigImporter:
                     print(f"Skipping invalid address: {addr_str} error: {e}")
                     
             all_db_networks = Network.query.all()
+            used_octets = {c.octet for c in Client.query.all() if not force_purge}
             
-            # 3. Import Peers
+            # 3. Prepare Peer Data
+            processed_peers = []
             for p in peers_data:
                 pub_key = p.get('publickey')
                 if not pub_key: continue
                 
                 # Check for existing Client
-                existing_client = Client.query.filter_by(public_key=pub_key).first()
-                if existing_client:
-                    continue # Skip duplicates
+                if not force_purge:
+                    existing_client = Client.query.filter_by(public_key=pub_key).first()
+                    if existing_client: continue
                 
                 name = p.get('name') or p.get('_comment_name')
                 if not name:
                     name = f"client_{pub_key[:5]}"
                 
-                # Addresses = Client's own tunnel IP(s)
-                # AllowedIPs = Networks/Hosts this client can access
                 client_addresses = p.get('address', '').split(',')
                 allowed_ips = p.get('allowedips', '').split(',')
                 
@@ -262,7 +264,7 @@ class ConfigImporter:
                 client_access_rules = [] # List of CIDRs
                 client_octet = 0 
                 
-                # First pass: identify networks and octet from the client's own addresses
+                # Derive matching networks and octet
                 for addr_str in client_addresses:
                     addr_str = addr_str.strip()
                     if not addr_str: continue
@@ -289,74 +291,104 @@ class ConfigImporter:
                     except:
                         pass
 
-                # Second pass: identify access rules from AllowedIPs
+                # Access rules from AllowedIPs
                 for ip_str in allowed_ips:
                     ip_str = ip_str.strip()
                     if not ip_str: continue
-                    
                     try:
                         if_obj = ipaddress.ip_interface(ip_str)
                         if isinstance(if_obj, ipaddress.IPv6Interface): continue
-                            
                         ip_addr = if_obj.ip
-                        
                         matched_net = None
                         for net_obj in server_networks:
                             if ip_addr in net_obj:
                                 matched_net = net_obj
                                 break
-                        
                         if matched_net:
-                            # It's one of our tunnel networks. 
-                            # If client isn't already in it, join it.
                             db_net = next((n for n in all_db_networks if n.cidr == str(matched_net)), None)
                             if db_net and db_net not in client_networks_to_join:
                                 client_networks_to_join.append(db_net)
                         else:
-                            # It's an Access Rule (target network/host)
                             client_access_rules.append(ip_str)
-                            
                     except:
-                        # Special handling for 0.0.0.0/0 or other non-interface strings
                         if ip_str == '0.0.0.0/0':
                             client_access_rules.append('0.0.0.0/0')
                 
-                # Create Client
+                processed_peers.append({
+                    'name': name,
+                    'public_key': pub_key,
+                    'private_key': p.get('privatekey', 'IMPORT_MISSING_PRIVATE_KEY'),
+                    'preshared_key': p.get('presharedkey'),
+                    'octet': client_octet,
+                    'keepalive': int(p.get('persistentkeepalive')) if p.get('persistentkeepalive') else None,
+                    'networks': client_networks_to_join,
+                    'access_rules': client_access_rules
+                })
+
+            # Sort peers: those with derived octets first to claim their specific IPs
+            processed_peers.sort(key=lambda x: x['octet'], reverse=True)
+            
+            # 4. Create Clients
+            stats['skipped_clients'] = []
+            
+            for cp in processed_peers:
+                target_octet = cp['octet']
+                
+                # STRICT VALIDATION: Loud Fails
+                if target_octet == 0:
+                    stats['skipped_clients'].append({
+                        'name': cp['name'],
+                        'reason': 'Could not determine tunnel IP from server or client config'
+                    })
+                    continue
+                
+                if target_octet in used_octets:
+                    # Search for which client already has this octet for a better error message
+                    colliding_client = Client.query.filter_by(octet=target_octet).first()
+                    colliding_name = colliding_client.name if colliding_client else "unknown"
+                    
+                    stats['skipped_clients'].append({
+                        'name': cp['name'],
+                        'reason': f'IP collision on octet {target_octet} with client "{colliding_name}"'
+                    })
+                    continue
+                
+                used_octets.add(target_octet)
+                
                 new_client = Client(
-                    name=name,
-                    public_key=pub_key,
-                    private_key=p.get('privatekey', 'IMPORT_MISSING_PRIVATE_KEY'),
-                    preshared_key=p.get('presharedkey'),
-                    octet=client_octet if client_octet > 0 else 0,
-                    keepalive=int(p.get('persistentkeepalive')) if p.get('persistentkeepalive') else None,
+                    name=cp['name'],
+                    public_key=cp['public_key'],
+                    private_key=cp['private_key'],
+                    preshared_key=cp['preshared_key'],
+                    octet=target_octet,
+                    keepalive=cp['keepalive'],
                     enabled=True,
                     dns_mode='default'
                 )
                 db.session.add(new_client)
-                db.session.commit()
+                db.session.flush() # Get ID for access rules
                 
                 # Join Networks
-                for n in client_networks_to_join:
-                    if n not in new_client.networks:
-                        new_client.networks.append(n)
+                for n in cp['networks']:
+                    new_client.networks.append(n)
                 
                 # Add Access Rules
-                for target_cidr in client_access_rules:
+                for target_cidr in cp['access_rules']:
                     rule = AccessRule(
                         source_client_id=new_client.id,
                         dest_cidr=target_cidr,
                         destination_type='network' if '/' in target_cidr and not target_cidr.endswith('/32') else 'host',
-                        proto='all', # Requested: accept all protocols
+                        proto='all',
                         action='ACCEPT'
                     )
                     db.session.add(rule)
                     stats['access_rules_created'] += 1
                 
-                db.session.commit()
                 stats['clients_created'] += 1
-                
-            return stats
             
+            db.session.commit()
+            return stats
+        
         except Exception as e:
             db.session.rollback()
             raise e

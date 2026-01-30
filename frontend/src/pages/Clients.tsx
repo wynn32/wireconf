@@ -22,6 +22,7 @@ interface Client {
     enabled: boolean;
     dns_mode: 'default' | 'custom' | 'none';
     dns_servers?: string;
+    tags: string[];
 }
 
 // Modal for editing client Advanced Details
@@ -199,6 +200,35 @@ const ClientCard: React.FC<{
         setEditing(false);
     };
 
+    const [isAddingTag, setIsAddingTag] = useState(false);
+    const [newTag, setNewTag] = useState('');
+
+    const handleAddTag = async () => {
+        if (!newTag.trim()) {
+            setIsAddingTag(false);
+            return;
+        }
+        const updatedTags = [...client.tags, newTag.trim()];
+        try {
+            await api.put(`/clients/${client.id}`, { tags: updatedTags });
+            setNewTag('');
+            setIsAddingTag(false);
+            onRefresh();
+        } catch (err) {
+            alert('Failed to add tag');
+        }
+    };
+
+    const handleRemoveTag = async (tagToRemove: string) => {
+        const updatedTags = client.tags.filter(t => t !== tagToRemove);
+        try {
+            await api.put(`/clients/${client.id}`, { tags: updatedTags });
+            onRefresh();
+        } catch (err) {
+            alert('Failed to remove tag');
+        }
+    };
+
 
     const handleToggleEnabled = async () => {
         try {
@@ -220,7 +250,7 @@ const ClientCard: React.FC<{
     };
 
     return (
-        <div className={`bg-slate-800 rounded-lg shadow-lg border p-5 flex flex-col transition-all ${client.enabled ? 'border-slate-700 hover:border-slate-600' : 'border-red-900/50 opacity-75'}`}>
+        <div className={`bg-slate-800 rounded-xl shadow-lg border p-6 flex flex-col transition-all ${client.enabled ? 'border-slate-700 hover:border-slate-600 scale-[1.01]' : 'border-red-900/50 opacity-75'}`}>
             <div className="flex justify-between items-start mb-4">
                 <div>
                     <h3 className="text-lg font-bold text-white flex items-center gap-2">
@@ -285,6 +315,46 @@ const ClientCard: React.FC<{
                     )}
                 </div>
 
+                {/* Tags Section */}
+                <div className="mt-4">
+                    <h4 className="text-[10px] uppercase text-slate-500 font-bold mb-2 tracking-wider">Tags & Labels</h4>
+                    <div className="flex flex-wrap gap-2 items-center">
+                        {client.tags.map(tag => (
+                            <span key={tag} className="flex items-center gap-1 bg-slate-900 text-slate-300 border border-slate-700 pl-2 pr-1 py-0.5 rounded-md text-xs group hover:border-slate-500 transition-colors">
+                                {tag}
+                                <button
+                                    onClick={() => handleRemoveTag(tag)}
+                                    className="text-slate-500 hover:text-red-400 p-0.5"
+                                    title="Remove tag"
+                                >
+                                    &times;
+                                </button>
+                            </span>
+                        ))}
+                        {isAddingTag ? (
+                            <div className="flex items-center gap-1">
+                                <input
+                                    type="text"
+                                    value={newTag}
+                                    onChange={e => setNewTag(e.target.value)}
+                                    onBlur={handleAddTag}
+                                    onKeyDown={e => e.key === 'Enter' && handleAddTag()}
+                                    autoFocus
+                                    className="bg-slate-900 border border-emerald-500/50 rounded px-2 py-0.5 text-xs text-white outline-none w-24"
+                                    placeholder="tag name..."
+                                />
+                            </div>
+                        ) : (
+                            <button
+                                onClick={() => setIsAddingTag(true)}
+                                className="text-slate-500 hover:text-emerald-400 text-xs px-2 py-0.5 border border-dashed border-slate-700 rounded-md hover:border-emerald-500/50 transition-colors"
+                            >
+                                + Add Tag
+                            </button>
+                        )}
+                    </div>
+                </div>
+
                 {editing && (
                     <div className="flex gap-2 mb-2">
                         <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white text-xs px-2 py-1 rounded">Save</button>
@@ -342,6 +412,9 @@ const Clients: React.FC = () => {
     // Filtering state
     const [nameFilter, setNameFilter] = useState('');
     const [networkFilter, setNetworkFilter] = useState<number | null>(null);
+    const [routerOnly, setRouterOnly] = useState(false);
+    const [ipFilter, setIpFilter] = useState('');
+    const [tagFilter, setTagFilter] = useState('');
 
     const fetchData = async () => {
         try {
@@ -375,7 +448,7 @@ const Clients: React.FC = () => {
         fetchData();
     }, []);
 
-    // Filter clients based on name and network
+    // Filter clients based on name, network, router status, and IP
     const filteredClients = clients.filter(client => {
         // Filter by name
         if (nameFilter && !client.name.toLowerCase().includes(nameFilter.toLowerCase())) {
@@ -385,6 +458,28 @@ const Clients: React.FC = () => {
         // Filter by network
         if (networkFilter !== null && !client.networks.includes(networkFilter)) {
             return false;
+        }
+
+        // Filter by router status
+        if (routerOnly && (!client.routes || client.routes.length === 0)) {
+            return false;
+        }
+
+        // Filter by IP Address
+        if (ipFilter) {
+            const matchesIps = client.ips.some(ip => ip.includes(ipFilter));
+            const matchesOctet = `.${client.octet}`.includes(ipFilter);
+            if (!matchesIps && !matchesOctet) {
+                return false;
+            }
+        }
+
+        // Filter by tag
+        if (tagFilter) {
+            const matchesTags = client.tags.some(tag => tag.toLowerCase().includes(tagFilter.toLowerCase()));
+            if (!matchesTags) {
+                return false;
+            }
         }
 
         return true;
@@ -411,8 +506,9 @@ const Clients: React.FC = () => {
             </div>
 
             {/* Filters */}
+            {/* Filters */}
             <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 items-end">
                     {/* Name Filter */}
                     <div>
                         <label className="block text-sm text-slate-400 mb-2">Filter by Name</label>
@@ -420,7 +516,31 @@ const Clients: React.FC = () => {
                             type="text"
                             value={nameFilter}
                             onChange={e => setNameFilter(e.target.value)}
-                            placeholder="Search client name..."
+                            placeholder="Client name..."
+                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-emerald-500 outline-none"
+                        />
+                    </div>
+
+                    {/* Tag Filter */}
+                    <div>
+                        <label className="block text-sm text-slate-400 mb-2">Filter by Tag</label>
+                        <input
+                            type="text"
+                            value={tagFilter}
+                            onChange={e => setTagFilter(e.target.value)}
+                            placeholder="Tag name..."
+                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-emerald-500 outline-none"
+                        />
+                    </div>
+
+                    {/* IP Filter */}
+                    <div>
+                        <label className="block text-sm text-slate-400 mb-2">Filter by IP Address</label>
+                        <input
+                            type="text"
+                            value={ipFilter}
+                            onChange={e => setIpFilter(e.target.value)}
+                            placeholder="Search IP (e.g. .10 or 10.6.0.10)..."
                             className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-emerald-500 outline-none"
                         />
                     </div>
@@ -439,24 +559,51 @@ const Clients: React.FC = () => {
                             ))}
                         </select>
                     </div>
+
+                    {/* Router Toggle */}
+                    <div className="pb-2">
+                        <label className="flex items-center gap-3 text-sm text-slate-300 cursor-pointer group">
+                            <div className="relative">
+                                <input
+                                    type="checkbox"
+                                    checked={routerOnly}
+                                    onChange={e => setRouterOnly(e.target.checked)}
+                                    className="sr-only peer"
+                                />
+                                <div className="w-10 h-5 bg-slate-700 rounded-full peer peer-checked:bg-blue-600 transition-colors shadow-inner"></div>
+                                <div className="absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-transform peer-checked:translate-x-5 shadow-sm"></div>
+                            </div>
+                            <div className="flex flex-col">
+                                <span className="group-hover:text-white transition-colors text-xs font-semibold">Routers Only</span>
+                                <span className="text-[10px] bg-blue-900/50 text-blue-300 px-1 py-0 rounded border border-blue-800/50">GATEWAY</span>
+                            </div>
+                        </label>
+                    </div>
                 </div>
 
-                {(nameFilter || networkFilter !== null) && (
-                    <div className="mt-3 flex items-center gap-2">
+                {(nameFilter || networkFilter !== null || routerOnly || ipFilter || tagFilter) && (
+                    <div className="mt-3 flex items-center justify-between border-t border-slate-700 pt-3">
                         <span className="text-sm text-slate-400">
-                            Showing {filteredClients.length} of {clients.length} clients
+                            Showing <span className="text-emerald-400 font-mono">{filteredClients.length}</span> of {clients.length} clients
                         </span>
                         <button
-                            onClick={() => { setNameFilter(''); setNetworkFilter(null); }}
-                            className="text-xs text-blue-400 hover:text-blue-300"
+                            onClick={() => {
+                                setNameFilter('');
+                                setNetworkFilter(null);
+                                setRouterOnly(false);
+                                setIpFilter('');
+                                setTagFilter('');
+                            }}
+                            className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 group"
                         >
-                            Clear filters
+                            <span className="group-hover:underline">Clear all filters</span>
+                            <span>×</span>
                         </button>
                     </div>
                 )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {loading ? (
                     <div className="text-slate-500">Loading clients...</div>
                 ) : filteredClients.length === 0 ? (

@@ -44,6 +44,8 @@ class Client(db.Model):
     # dns_mode: 'default' (use server IPs), 'custom' (use dns_servers), 'none' (no DNS block)
     dns_mode: Mapped[str] = mapped_column(String(20), default='default', nullable=False)
     dns_servers: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # Comma-separated IPs
+    
+    tags: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # Comma-separated tags
 
     networks: Mapped[List["Network"]] = relationship(
         secondary=client_network_association, back_populates="clients"

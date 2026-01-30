@@ -123,19 +123,34 @@ def create_network():
     db.session.commit()
     return jsonify({'id': net.id}), 201
 
-@bp.route('/networks/<int:network_id>', methods=['DELETE'])
-def delete_network(network_id):
+@bp.route('/networks/<int:network_id>', methods=['PUT', 'DELETE'])
+def handle_network(network_id):
     net = db.session.get(Network, network_id)
     if not net:
         return jsonify({'error': 'Network not found'}), 404
         
-    # The association table will be handled by SQLAlchemy relationship 
-    # but we can be explicit or rely on the backref.
-    # Note: clients will still exist, just lose this network.
-    
-    db.session.delete(net)
-    db.session.commit()
-    return jsonify({'status': 'deleted'}), 200
+    if request.method == 'DELETE':
+        db.session.delete(net)
+        db.session.commit()
+        return jsonify({'status': 'deleted'}), 200
+        
+    elif request.method == 'PUT':
+        data = request.json
+        if 'name' in data:
+            net.name = data['name']
+        if 'cidr' in data:
+            net.cidr = data['cidr']
+        if 'interface_address' in data:
+            net.interface_address = data['interface_address']
+            
+        db.session.commit()
+        return jsonify({
+            'status': 'updated',
+            'id': net.id,
+            'name': net.name,
+            'cidr': net.cidr,
+            'interface_address': net.interface_address
+        }), 200
 
 @bp.route('/clients', methods=['GET'])
 def get_clients():
@@ -161,7 +176,8 @@ def get_clients():
             'networks': [n.id for n in c.networks],
             'routes': [r.target_cidr for r in c.routes],
             'dns_mode': c.dns_mode,
-            'dns_servers': c.dns_servers
+            'dns_servers': c.dns_servers,
+            'tags': c.tags.split(',') if c.tags else []
         })
     
     return jsonify(result)
@@ -175,6 +191,7 @@ def create_client():
     routed_cidrs = data.get('routes', []) # List of strings e.g. ["192.168.1.0/24"]
     dns_mode = data.get('dns_mode', 'default')  # 'default', 'custom', or 'none'
     dns_servers = data.get('dns_servers')  # Comma-separated IPs for custom mode
+    tags = data.get('tags', []) # List of strings
     
     # Generate Keys
     priv = KeyManager.generate_private_key()
@@ -203,7 +220,8 @@ def create_client():
         networks=networks,
         keepalive=keepalive,
         dns_mode=dns_mode,
-        dns_servers=dns_servers
+        dns_servers=dns_servers,
+        tags=','.join(tags) if tags else None
     )
     db.session.add(client)
     db.session.flush() # Get ID
@@ -235,6 +253,7 @@ def update_client(client_id):
     enabled = data.get('enabled')
     dns_mode = data.get('dns_mode')
     dns_servers = data.get('dns_servers')
+    tags = data.get('tags') # List of strings if provided
 
     if enabled is not None:
         client.enabled = enabled
@@ -248,6 +267,9 @@ def update_client(client_id):
     if dns_servers is not None:
         client.dns_servers = dns_servers
         
+    if tags is not None:
+        client.tags = ','.join([t.strip() for t in tags if t.strip()]) if tags else None
+
     if routed_cidrs is not None:
         # Replace existing routes
         Route.query.filter_by(via_client_id=client.id).delete()

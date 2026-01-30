@@ -13,6 +13,9 @@ const Networks: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [formData, setFormData] = useState({ name: '', cidr: '', interface_address: '' });
 
+    const [editingId, setEditingId] = useState<number | null>(null);
+    const [editName, setEditName] = useState('');
+
     const fetchNetworks = async () => {
         try {
             const res = await api.get('/networks');
@@ -21,6 +24,22 @@ const Networks: React.FC = () => {
             console.error(err);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleEdit = (net: Network) => {
+        setEditingId(net.id);
+        setEditName(net.name);
+    };
+
+    const handleSaveEdit = async () => {
+        if (!editingId) return;
+        try {
+            await api.put(`/networks/${editingId}`, { name: editName });
+            setEditingId(null);
+            fetchNetworks();
+        } catch (err: any) {
+            alert(`Failed to update network: ${err.response?.data?.error || err.message}`);
         }
     };
 
@@ -105,25 +124,61 @@ const Networks: React.FC = () => {
                         </thead>
                         <tbody className="divide-y divide-slate-700">
                             {loading ? (
-                                <tr><td colSpan={4} className="p-4 text-center text-slate-500">Loading...</td></tr>
+                                <tr><td colSpan={5} className="p-4 text-center text-slate-500">Loading...</td></tr>
                             ) : networks.map(net => (
                                 <tr key={net.id} className="hover:bg-slate-700/50 transition-colors">
                                     <td className="p-4 text-slate-500">#{net.id}</td>
-                                    <td className="p-4 font-medium text-slate-200">{net.name}</td>
+                                    <td className="p-4 font-medium text-slate-200">
+                                        {editingId === net.id ? (
+                                            <input
+                                                className="bg-slate-900 border border-slate-700 rounded p-1 text-white focus:border-emerald-500 outline-none w-full"
+                                                value={editName}
+                                                onChange={e => setEditName(e.target.value)}
+                                                autoFocus
+                                            />
+                                        ) : (
+                                            net.name
+                                        )}
+                                    </td>
                                     <td className="p-4 font-mono text-emerald-400">{net.cidr}</td>
                                     <td className="p-4 font-mono text-blue-400">{net.interface_address}</td>
-                                    <td className="p-4 text-right">
-                                        <button
-                                            onClick={() => handleDelete(net.id, net.name)}
-                                            className="text-red-400 hover:text-red-300 text-sm font-medium transition-colors"
-                                        >
-                                            Delete
-                                        </button>
+                                    <td className="p-4 text-right space-x-3">
+                                        {editingId === net.id ? (
+                                            <>
+                                                <button
+                                                    onClick={handleSaveEdit}
+                                                    className="text-emerald-400 hover:text-emerald-300 text-sm font-medium transition-colors"
+                                                >
+                                                    Save
+                                                </button>
+                                                <button
+                                                    onClick={() => setEditingId(null)}
+                                                    className="text-slate-400 hover:text-slate-300 text-sm font-medium transition-colors"
+                                                >
+                                                    Cancel
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <button
+                                                    onClick={() => handleEdit(net)}
+                                                    className="text-blue-400 hover:text-blue-300 text-sm font-medium transition-colors"
+                                                >
+                                                    Edit
+                                                </button>
+                                                <button
+                                                    onClick={() => handleDelete(net.id, net.name)}
+                                                    className="text-red-400 hover:text-red-300 text-sm font-medium transition-colors"
+                                                >
+                                                    Delete
+                                                </button>
+                                            </>
+                                        )}
                                     </td>
                                 </tr>
                             ))}
                             {!loading && networks.length === 0 && (
-                                <tr><td colSpan={4} className="p-4 text-center text-slate-500">No networks found.</td></tr>
+                                <tr><td colSpan={5} className="p-4 text-center text-slate-500">No networks found.</td></tr>
                             )}
                         </tbody>
                     </table>
