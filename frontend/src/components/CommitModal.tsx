@@ -15,12 +15,13 @@ interface CommitPreview {
 
 interface Props {
     onClose: () => void;
-    onConfirm: () => void;
+    onConfirm: (useSafety: boolean) => void;
 }
 
 const CommitModal: React.FC<Props> = ({ onClose, onConfirm }) => {
     const [preview, setPreview] = useState<CommitPreview | null>(null);
     const [loading, setLoading] = useState(true);
+    const [useSafety, setUseSafety] = useState(true);
 
     const fetchPreview = () => {
         setLoading(true);
@@ -132,17 +133,32 @@ const CommitModal: React.FC<Props> = ({ onClose, onConfirm }) => {
                     )}
                 </div>
 
-                <div className="p-6 border-t border-slate-700 flex justify-end gap-3">
-                    <button onClick={onClose} className="px-4 py-2 text-slate-400 hover:text-white transition-colors">
-                        Cancel
-                    </button>
-                    <button
-                        onClick={onConfirm}
-                        disabled={!hasChanges}
-                        className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 text-white px-6 py-2 rounded-lg font-bold shadow-lg transition-all active:scale-95"
-                    >
-                        Apply Changes
-                    </button>
+                <div className="p-6 border-t border-slate-700 flex flex-col md:flex-row justify-between items-center gap-4">
+                    <label className="flex items-center gap-3 cursor-pointer group">
+                        <input
+                            type="checkbox"
+                            checked={useSafety}
+                            onChange={(e) => setUseSafety(e.target.checked)}
+                            className="w-5 h-5 rounded border-slate-600 bg-slate-900 text-emerald-600 focus:ring-emerald-500 focus:ring-offset-slate-800"
+                        />
+                        <div className="flex flex-col">
+                            <span className="text-sm font-medium text-slate-200 group-hover:text-white transition-colors">Use Safety Revert</span>
+                            <span className="text-[10px] text-slate-500">Automatically revert if connection is lost</span>
+                        </div>
+                    </label>
+
+                    <div className="flex gap-3 w-full md:w-auto">
+                        <button onClick={onClose} className="px-4 py-2 text-slate-400 hover:text-white transition-colors flex-1 md:flex-none text-center">
+                            Cancel
+                        </button>
+                        <button
+                            onClick={() => onConfirm(useSafety)}
+                            disabled={!hasChanges}
+                            className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-700 text-white px-6 py-2 rounded-lg font-bold shadow-lg transition-all active:scale-95 flex-1 md:flex-none"
+                        >
+                            Apply Changes
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

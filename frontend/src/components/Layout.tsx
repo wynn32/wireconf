@@ -12,14 +12,14 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [safetyState, setSafetyState] = useState<'idle' | 'committing' | 'verifying' | 'reverting'>('idle');
     const [countdown, setCountdown] = useState(60);
 
-    const handleConfirmCommit = async () => {
+    const handleConfirmCommit = async (useSafety: boolean) => {
         setShowCommitModal(false);
         setSafetyState('committing');
-        setStatusMsg('Applying changes...');
+        setStatusMsg(useSafety ? 'Applying changes...' : 'Applying changes (Safety Bypass)...');
 
         try {
             // 1. Commit and get Transaction ID from server
-            const res = await api.post('/commit', { use_safety: true });
+            const res = await api.post('/commit', { use_safety: useSafety });
             const transactionId = res.data.transaction_id;
 
             if (!transactionId) {

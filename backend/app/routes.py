@@ -835,10 +835,32 @@ def _perform_commit():
         print(f"Commit failed: {str(e)}")
         return {'status': f'committed_with_warning: {str(e)}', 'file': config_path}
 
+def check_bypass_safety_permission():
+    """
+    STUB: Check if the current user has permission to bypass the safety mechanism.
+    Always returns True for now as requested.
+    """
+    return True
+
 @bp.route('/commit', methods=['POST'])
 def commit_changes():
     data = request.json or {}
-    use_safety = data.get('use_safety', True) # Default to true
+    
+    # Check if safety is globally disabled via env var
+    safety_disabled = os.environ.get("DISABLE_SAFETY_MECHANISM", "false").lower() == "true"
+    
+    # Client can suggest to bypass safety
+    suggest_bypass = data.get('use_safety') is False
+    
+    if suggest_bypass:
+        if check_bypass_safety_permission():
+            print("[Routes] Safety mechanism bypassed by user request (permission granted)")
+            use_safety = False
+        else:
+            print("[Routes] Safety bypass request denied (permission check failed). Falling back to safety.")
+            use_safety = not safety_disabled
+    else:
+        use_safety = not safety_disabled
     
     transaction_id = None
     if use_safety:

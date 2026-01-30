@@ -14,9 +14,9 @@ class SafetyManager:
     _perform_commit_fn = None # Internal function to trigger regeneration
     
     # DB path
-    DB_PATH = os.path.join(os.getcwd(), "backend/instance/wireguard.db")
+    DB_PATH = os.path.join(os.getcwd(), "instance/wireguard.db")
     LAST_GOOD_DB_PATH = DB_PATH + ".last_good"
-    SIDECAR_PATH = os.path.join(os.getcwd(), "backend/instance/safety_transaction.json")
+    SIDECAR_PATH = os.path.join(os.getcwd(), "instance/safety_transaction.json")
 
     @classmethod
     def _save_state(cls, transaction_id, status, expires_at):
