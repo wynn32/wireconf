@@ -1,3 +1,4 @@
+import os
 from .models import Network, Client, AccessRule, Route
 from .ip_manager import IPManager
 from typing import List
@@ -8,22 +9,14 @@ class ConfigRenderer:
         """
         Renders the complete wg0.conf string.
         """
-        # [Interface]
-        # Calculate Address list (all network server IPs)
-        # Assuming Network.interface_address is the server's IP in that network (e.g. 10.0.1.1/24)
         addresses = [n.interface_address for n in networks]
         address_str = ", ".join(addresses)
         
-        # Build PreUp/PostDown for firewall
-        # We will generate a separate script or embedded commands.
-        # Embedded is easier for single file.
-        
-        # Basic MASQUERADE rules are usually needed for internet access / routing.
-        # User defined rules come from AccessRule.
-        
-        # To simplify, we might want to put the heavy lifting in a script, 
-        # but let's try to inline standard stuff and rules.
-        
+        # The rules script location
+        config_dir = os.path.dirname(os.environ.get("WG_CONFIG_PATH", "/etc/wireguard/wg0.conf"))
+        interface_name = os.path.basename(os.environ.get("WG_CONFIG_PATH", "wg0.conf")).replace('.conf', '')
+        rules_script_path = os.path.join(config_dir, f"{interface_name}-rules.sh")
+
         conf = []
         conf.append("[Interface]")
         conf.append(f"PrivateKey = {server_private_key}")
@@ -31,22 +24,13 @@ class ConfigRenderer:
         conf.append(f"ListenPort = {port}")
         conf.append("MTU = 1420")
         conf.append("")
-        conf.append("# Forwarding")
+        conf.append("# Forwarding and Firewall")
         conf.append("PreUp = sysctl -w net.ipv4.ip_forward=1")
         
-        # Flush custom chains if we use them, or just generic cleanup?
-        # For hot reload, wg-quick usually tears down everything.
+        # We call our external script
+        conf.append(f"PostUp = {rules_script_path} apply")
+        conf.append(f"PostDown = {rules_script_path} remove")
         
-        # Apply iptables rules
-        # We need a function to generate the iptables commands string
-        iptables_up, iptables_down = ConfigRenderer.render_iptables_commands(networks, clients, rules)
-        
-        for cmd in iptables_up:
-            conf.append(f"PostUp = {cmd}")
-            
-        for cmd in iptables_down:
-            conf.append(f"PostDown = {cmd}")
-            
         conf.append("")
         
         # Peers
@@ -59,28 +43,65 @@ class ConfigRenderer:
             if client.preshared_key:
                 conf.append(f"PresharedKey = {client.preshared_key}")
             
-            # AllowedIPs logic:
-            # 1. The client's assigned IPs in all networks it belongs to.
-            # 2. Any subnets ROUTED through this client (routes).
-            
             allowed_ips = []
-            
-            # Client's own IPs
             for net in client.networks:
-                # Calculate /32 for the client
                 client_ip = IPManager.get_client_ip(net, client)
                 allowed_ips.append(client_ip)
-                
-            # Routed subnets
             for route in client.routes:
                 allowed_ips.append(route.target_cidr)
                 
             conf.append(f"AllowedIPs = {', '.join(allowed_ips)}")
-
             conf.append(f"### end {client.name} ###")
             conf.append("")
             
         return "\n".join(conf)
+
+    @staticmethod
+    def render_firewall_script(networks: List[Network], clients: List[Client], rules: List[AccessRule]) -> str:
+        """
+        Generates a shell script to manage iptables rules independently.
+        """
+        iptables_up, iptables_down = ConfigRenderer.render_iptables_commands(networks, clients, rules)
+        
+        script = [
+            "#!/bin/bash",
+            "# Automatically generated WireGuard firewall script",
+            "",
+            "COMMAND=$1",
+            "",
+            "apply_rules() {",
+        ]
+        
+        for cmd in iptables_up:
+            script.append(f"  {cmd}")
+            
+        script.extend([
+            "}",
+            "",
+            "remove_rules() {",
+        ])
+        
+        for cmd in iptables_down:
+            script.append(f"  {cmd}")
+            
+        script.extend([
+            "}",
+            "",
+            "case \"$COMMAND\" in",
+            "  apply)",
+            "    apply_rules",
+            "    ;;",
+            "  remove)",
+            "    remove_rules",
+            "    ;;",
+            "  *)",
+            "    echo \"Usage: $0 {apply|remove}\"",
+            "    exit 1",
+            "    ;;",
+            "esac"
+        ])
+        
+        return "\n".join(script)
 
     @staticmethod
     def render_client_config(client: Client, server_public_key: str, server_endpoint: str, other_routes: list[str] = None) -> str:

@@ -68,6 +68,17 @@ class SystemService:
             SystemService.restart_service(new_config_content, config_path)
 
     @staticmethod
+    def apply_firewall_rules(script_content: str, script_path: str):
+        """
+        Writes and applies the firewall script.
+        """
+        SystemService._write_config(script_content, script_path)
+        # Make executable
+        os.chmod(script_path, 0o755)
+        # Apply
+        SystemService._run_command([script_path, "apply"], check=True)
+
+    @staticmethod
     def restart_service(new_config_content: str, config_path: str = "/etc/wireguard/wg0.conf"):
         """
         Safely restarts WireGuard by stopping the OLD config, writing the NEW, and starting.

@@ -64,6 +64,10 @@ def complete_setup():
         return jsonify({'error': 'At least one client is required'}), 400
     
     SetupManager.complete_setup()
+    
+    # NEW: Initially create the config and firewall script
+    _perform_commit()
+    
     return jsonify({'status': 'setup_complete'})
 
 @bp.route('/import', methods=['POST'])
@@ -405,19 +409,18 @@ def commit_preview():
     
     # 2. Comparison Logic
     config_path = os.environ.get("WG_CONFIG_PATH", "wg0_generated.conf")
-    old_conf = ""
-    if os.path.exists(config_path):
-        with open(config_path, "r") as f:
-            old_conf = f.read()
+    rules_path = config_path.replace('.conf', '-rules.sh')
+    new_rules = ConfigRenderer.render_firewall_script(networks, clients, rules)
     
     # Simplified Diff Summary
     summary = {
         'added_clients': [],
         'removed_clients': [],
-        'modified_interface': False
+        'modified_interface': False,
+        'modified_peers': False,
+        'modified_rules': False
     }
     
-    # Basic string diff for Interface
     def get_iface(c):
         lines = []
         for l in c.splitlines():
@@ -425,8 +428,23 @@ def commit_preview():
             lines.append(l)
         return "\n".join(lines).strip()
         
-    if get_iface(old_conf) != get_iface(new_conf):
-        summary['modified_interface'] = True
+    if os.path.exists(config_path):
+        with open(config_path, "r") as f:
+            old_conf = f.read()
+            
+        if get_iface(old_conf) != get_iface(new_conf):
+            summary['modified_interface'] = True
+        
+        if old_conf != new_conf:
+            summary['modified_peers'] = True
+            
+    if os.path.exists(rules_path):
+        with open(rules_path, "r") as f:
+            old_rules = f.read()
+        if old_rules != new_rules:
+            summary['modified_rules'] = True
+    else:
+        summary['modified_rules'] = True
         
     # Peers diff
     def get_peers(c):
@@ -471,12 +489,12 @@ def commit_preview():
 from .system_service import SystemService
 import os
 
-@bp.route('/commit', methods=['POST'])
-def commit_changes():
+def _perform_commit():
+    """Helper to render and apply server configuration."""
     # Get server configuration from database
     server_config = SetupManager.get_server_config()
     if not server_config.server_private_key:
-        return jsonify({'error': 'Server not configured. Please complete setup wizard.'}), 400
+        return {'error': 'Server not configured. Please complete setup wizard.'}
     
     # 1. Fetch all data
     networks = Network.query.all()
@@ -489,43 +507,66 @@ def commit_changes():
     conf_content = ConfigRenderer.render_wg_conf(server_priv, server_port, networks, clients, rules)
     
     # 3. Restart Service (Safe Reload)
-    # Use env var for path, default to local for dev
     config_path = os.environ.get("WG_CONFIG_PATH", "wg0_generated.conf")
+    rules_path = config_path.replace('.conf', '-rules.sh')
+    rules_content = ConfigRenderer.render_firewall_script(networks, clients, rules)
     
     try:
         # Smart Restart/Reload Logic
-        full_restart_needed = True
+        interface_changed = True
+        peers_changed = True
+        rules_changed = True
         
         if os.path.exists(config_path):
             with open(config_path, "r") as f:
-                old_content = f.read()
+                old_conf = f.read()
             
-            # Extract Interface section (up to first client marker)
             def get_interface_part(content):
                 lines = []
                 for line in content.splitlines():
-                    if line.startswith("### begin"):
-                        break
+                    if line.startswith("### begin"): break
                     lines.append(line)
                 return "\n".join(lines).strip()
             
-            old_interface = get_interface_part(old_content)
-            new_interface = get_interface_part(conf_content)
-            
-            if old_interface == new_interface:
-                full_restart_needed = False
+            if get_interface_part(old_conf) == get_interface_part(conf_content):
+                interface_changed = False
+                if old_conf == conf_content:
+                    peers_changed = False
+                    
+        if os.path.exists(rules_path):
+            with open(rules_path, "r") as f:
+                old_rules = f.read()
+            if old_rules == rules_content:
+                rules_changed = False
         
-        if full_restart_needed:
-            print("Performing FULL RESTART (Interface/Rules changed)")
+        # Write the rules script first (PostUp depends on it)
+        SystemService._write_config(rules_content, rules_path)
+        os.chmod(rules_path, 0o755)
+
+        if interface_changed:
+            print("Performing FULL RESTART (Interface/Networks changed)")
             SystemService.restart_service(conf_content, config_path=config_path)
             status = 'committed (full restart)'
-        else:
+        elif peers_changed:
             print("Performing HOT RELOAD (Peers changed)")
             SystemService.reload_service(conf_content, config_path=config_path)
+            SystemService.apply_firewall_rules(rules_content, rules_path)
             status = 'committed (hot reload)'
+        elif rules_changed:
+            print("Performing HOT FIREWALL UPDATE (Only rules changed)")
+            SystemService.apply_firewall_rules(rules_content, rules_path)
+            status = 'committed (firewall update)'
+        else:
+            status = 'committed (no changes)'
+            
+        return {'status': status, 'file': config_path}
             
     except Exception as e:
-        status = f'committed_with_warning: {str(e)}'
-        
-    return jsonify({'status': status, 'file': config_path})
+        print(f"Commit failed: {str(e)}")
+        return {'status': f'committed_with_warning: {str(e)}', 'file': config_path}
+
+@bp.route('/commit', methods=['POST'])
+def commit_changes():
+    result = _perform_commit()
+    return jsonify(result)
 

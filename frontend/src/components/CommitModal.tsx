@@ -6,6 +6,8 @@ interface CommitPreview {
         added_clients: { name: string, id: number | null }[];
         removed_clients: string[];
         modified_interface: boolean;
+        modified_peers: boolean;
+        modified_rules: boolean;
     };
     new_config: string;
     full_restart_needed: boolean;
@@ -52,7 +54,9 @@ const CommitModal: React.FC<Props> = ({ onClose, onConfirm }) => {
 
     const hasChanges = preview.summary.added_clients.length > 0 ||
         preview.summary.removed_clients.length > 0 ||
-        preview.summary.modified_interface;
+        preview.summary.modified_interface ||
+        preview.summary.modified_peers ||
+        preview.summary.modified_rules;
 
     return (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[100] backdrop-blur-sm p-4">
@@ -101,10 +105,20 @@ const CommitModal: React.FC<Props> = ({ onClose, onConfirm }) => {
                                 )}
                             </div>
 
-                            {preview.summary.modified_interface && (
+                            {preview.summary.modified_interface ? (
                                 <div className="bg-amber-900/20 border border-amber-900/50 p-4 rounded-lg">
-                                    <h4 className="text-amber-400 text-xs font-bold uppercase mb-2">Interface/Rules Modified</h4>
-                                    <p className="text-amber-200 text-sm">A full server restart will be performed to apply network or firewall changes.</p>
+                                    <h4 className="text-amber-400 text-xs font-bold uppercase mb-2">Full Restart Required</h4>
+                                    <p className="text-amber-200 text-sm">Interface or network settings changed. The WireGuard service will be restarted.</p>
+                                </div>
+                            ) : preview.summary.modified_peers ? (
+                                <div className="bg-blue-900/20 border border-blue-900/50 p-4 rounded-lg">
+                                    <h4 className="text-blue-400 text-xs font-bold uppercase mb-2">Hot Reload Available</h4>
+                                    <p className="text-blue-200 text-sm">Only clients changed. Using <code>wg syncconf</code> for a zero-downtime update.</p>
+                                </div>
+                            ) : preview.summary.modified_rules && (
+                                <div className="bg-purple-900/20 border border-purple-900/50 p-4 rounded-lg">
+                                    <h4 className="text-purple-400 text-xs font-bold uppercase mb-2">Hot Firewall Update</h4>
+                                    <p className="text-purple-200 text-sm">Only firewall rules changed. Applying updates without touching the tunnel.</p>
                                 </div>
                             )}
 
