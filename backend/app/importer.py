@@ -125,7 +125,7 @@ class ConfigImporter:
         peers = []
         current_peer = {}
         
-        name_comment_re = re.compile(r'#\s*(?:Name:)?\s*([a-zA-Z0-9_\-]+)')
+        name_comment_re = re.compile(r'^#+\s*(.*?)\s*#*$')
         last_comment_name = None
         
         for line in lines:
@@ -136,7 +136,12 @@ class ConfigImporter:
             if line.startswith('#'):
                 match = name_comment_re.search(line)
                 if match:
-                    last_comment_name = match.group(1)
+                    val = match.group(1).strip()
+                    # Strip "Name:" prefix if it exists
+                    if val.lower().startswith('name:'):
+                        val = val[5:].strip()
+                    if val:
+                        last_comment_name = val
                 continue
             if line.startswith('[') and line.endswith(']'):
                 section_name = line[1:-1].lower()
@@ -159,7 +164,100 @@ class ConfigImporter:
                     current_peer[key] = val
         if current_peer:
             peers.append(current_peer)
+            
+        # Clean up peer names if they have common prefixes/suffixes
+        ConfigImporter._cleanup_peer_names(peers)
+        
         return interface_data, peers
+
+    @staticmethod
+    def _cleanup_peer_names(peers):
+        """
+        Strips common whole-word prefixes/suffixes across all peer names.
+        Only strips if separated by spaces.
+        """
+        if not peers:
+            return
+
+        name_lists = []
+        for p in peers:
+            name = p.get('_comment_name')
+            if not name:
+                return
+            # Split by spaces, keep empty strings if multiple spaces for reconstruction
+            name_lists.append(name.split(' '))
+
+        if len(name_lists) < 2:
+            return
+
+        # Find common prefix words
+        common_prefix = []
+        first_list = name_lists[0]
+        for i in range(len(first_list)):
+            word = first_list[i]
+            match = True
+            for other in name_lists[1:]:
+                if i >= len(other) or other[i] != word:
+                    match = False
+                    break
+            if match:
+                common_prefix.append(word)
+            else:
+                break
+        
+        # We don't want to strip EVERYTHING if names are identical or one is a subset
+        # But usually there's a unique part. If prefix is the whole first name, 
+        # check if it's the whole of any name.
+        safe_prefix_len = len(common_prefix)
+        for nl in name_lists:
+            if len(nl) <= safe_prefix_len:
+                # If prefix is the entire name, don't strip the last word to avoid empty name
+                safe_prefix_len = len(nl) - 1
+                break
+        
+        common_prefix = common_prefix[:max(0, safe_prefix_len)]
+
+        # Apply prefix stripping
+        if common_prefix:
+            p_len = len(common_prefix)
+            for i, nl in enumerate(name_lists):
+                name_lists[i] = nl[p_len:]
+
+        # Find common suffix words
+        common_suffix = []
+        first_list = name_lists[0]
+        for i in range(1, len(first_list) + 1):
+            word = first_list[-i]
+            match = True
+            for other in name_lists[1:]:
+                if i > len(other) or other[-i] != word:
+                    match = False
+                    break
+            if match:
+                common_suffix.insert(0, word)
+            else:
+                break
+        
+        safe_suffix_len = len(common_suffix)
+        for nl in name_lists:
+            if len(nl) <= safe_suffix_len:
+                safe_suffix_len = len(nl) - 1
+                break
+        
+        common_suffix = common_suffix[len(common_suffix)-max(0, safe_suffix_len):] if common_suffix else []
+
+        # Apply suffix stripping and join back
+        s_len = len(common_suffix)
+        for i, nl in enumerate(name_lists):
+            if s_len > 0:
+                final_words = nl[:-s_len]
+            else:
+                final_words = nl
+            
+            # Join and update
+            new_name = ' '.join(final_words).strip()
+            if new_name:
+                peers[i]['_comment_name'] = new_name
 
     @staticmethod
     def _import_to_db(server_data, peers_data, force_purge=False):
@@ -255,7 +353,12 @@ class ConfigImporter:
                 
                 name = p.get('name') or p.get('_comment_name')
                 if not name:
-                    name = f"client_{pub_key[:5]}"
+                    allowed_ips = p.get('allowedips', '').split(',')
+                    if allowed_ips and allowed_ips[0].strip():
+                        # Use the first IP address as the name (remove CIDR)
+                        name = allowed_ips[0].strip().split('/')[0]
+                    else:
+                        name = f"client_{pub_key[:5]}"
                 
                 client_addresses = p.get('address', '').split(',')
                 allowed_ips = p.get('allowedips', '').split(',')
@@ -265,7 +368,7 @@ class ConfigImporter:
                 client_octet = 0 
                 
                 # Derive matching networks and octet
-                for addr_str in client_addresses:
+                for addr_str in client_addresses + allowed_ips:
                     addr_str = addr_str.strip()
                     if not addr_str: continue
                     try:

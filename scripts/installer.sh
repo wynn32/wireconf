@@ -127,12 +127,22 @@ start_stop_daemon_args="--make-pidfile"
 output_log="/var/log/wireguard-mgmt.log"
 error_log="/var/log/wireguard-mgmt.err"
 
+# Allow time for workers to stop gracefully before killing
+retry="TERM/30/KILL/5"
+
 depend() {
     need net
     after firewall
 }
+
+start_pre() {
+    # If pidfile exists but process is gone, remove it
+    if [ -f "\$pidfile" ] && ! pgrep -F "\$pidfile" >/dev/null; then
+        rm -f "\$pidfile"
+    fi
+}
 EOF
-    chmod +x /etc/init.d/wireguard-mgmt
+chmod +x /etc/init.d/wireguard-mgmt
     rc-update add wireguard-mgmt default
     rc-update add nginx default
 else
