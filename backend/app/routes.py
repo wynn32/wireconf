@@ -8,6 +8,7 @@ from .importer import ConfigImporter
 from .importer import ConfigImporter
 from .system_service import SystemService
 from .safety_manager import SafetyManager
+from .auth_manager import AuthManager, require_permission, require_login
 import io
 import time
 import datetime
@@ -196,41 +197,37 @@ def derive_public_key():
 
 
 @bp.route('/wireguard/status', methods=['GET'])
+@require_login
 def get_wireguard_status():
     """
     Get live status of WireGuard peers.
     Executes `wg show all dump` and maps it to DB clients.
     """
+    user = AuthManager.get_current_user()
+    
     # 1. Fetch all clients from DB for mapping
     clients = Client.query.all()
-    client_map = {c.public_key: c for c in clients}
-    
+    # Filter visible clients
+    visible_clients = []
+    for c in clients:
+        if AuthManager.has_permission(user, 'CLIENT', c.id, 'VIEW'):
+            visible_clients.append(c)
+
+    client_map = {c.public_key: c for c in visible_clients}
     peer_stats = {}
     
     try:
         # 2. Run wg show all dump
-        # Output format: interface, public-key, preshared-key, endpoint, allowed-ips, latest-handshake, transfer-rx, transfer-tx, persistent-keepalive
         result = SystemService.get_status_dump()
         
         if result.returncode != 0:
-            # If wg command fails (e.g. not root, or wg not installed), return empty stats but valid JSON
             print(f"Error running wg show: {result.stderr}")
-            # We still want to return the client list, just with offline status
         else:
             lines = result.stdout.strip().split('\n')
             for line in lines:
                 parts = line.split('\t')
                 if len(parts) < 8:
                     continue
-                    
-                # Skip the interface line itself (it doesn't have a public key usually in the same slot, or is identified uniquely)
-                # 'wg show all dump' first line is usually the interface itself if just 'wg show dump'
-                # But 'all dump' format: interface \t public-key ...
-                # If it's the interface definition, public-key column is the private key (hidden) or similar? 
-                # Actually for interface line: interface, private-key, public-key, listen-port, fwmark
-                # For peer line: interface, public-key, preshared-key, endpoint, allowed-ips, latest-handshake, transfer-rx, transfer-tx, persistent-keepalive
-                
-                # We can distinguish by length or by checking if the second column matches a client public key
                 
                 pub_key = parts[1]
                 
@@ -251,10 +248,10 @@ def get_wireguard_status():
     except Exception as e:
         print(f"Exception fetching wg stats: {e}")
         
-    # 3. Construct response combining DB info and live stats
+    # 3. Construct response 
     response = []
     
-    for client in clients:
+    for client in visible_clients:
         stats = peer_stats.get(client.public_key, {
             'endpoint': '(none)',
             'latest_handshake': 0,
@@ -278,6 +275,7 @@ def get_wireguard_status():
     return jsonify(response)
 
 @bp.route('/wireguard/restart', methods=['POST'])
+@require_permission('GLOBAL', 'MODIFY') # Restarting service is a global action
 def restart_wireguard():
     """Manually restart the WireGuard service."""
     config_path = os.environ.get("WG_CONFIG_PATH", "/etc/wireguard/wg0.conf")
@@ -293,8 +291,10 @@ def restart_wireguard():
 
 
 @bp.route('/networks', methods=['GET'])
+@require_login
 def get_networks():
-    networks = Network.query.all()
+    user = AuthManager.get_current_user()
+    networks = AuthManager.get_accessible_networks(user, 'VIEW')
     return jsonify([{
         'id': n.id,
         'name': n.name,
@@ -303,6 +303,7 @@ def get_networks():
     } for n in networks])
 
 @bp.route('/networks', methods=['POST'])
+@require_permission('GLOBAL', 'MODIFY')
 def create_network():
     data = request.json
     # TODO: Add validation
@@ -312,17 +313,26 @@ def create_network():
     return jsonify({'id': net.id}), 201
 
 @bp.route('/networks/<int:network_id>', methods=['PUT', 'DELETE'])
+@require_login
 def handle_network(network_id):
+    user = AuthManager.get_current_user()
+    
     net = db.session.get(Network, network_id)
     if not net:
         return jsonify({'error': 'Network not found'}), 404
         
     if request.method == 'DELETE':
+        if not AuthManager.has_permission(user, 'NETWORK', network_id, 'DELETE'):
+             return jsonify({'error': 'Forbidden'}), 403
+             
         db.session.delete(net)
         db.session.commit()
         return jsonify({'status': 'deleted'}), 200
         
     elif request.method == 'PUT':
+        if not AuthManager.has_permission(user, 'NETWORK', network_id, 'MODIFY'):
+             return jsonify({'error': 'Forbidden'}), 403
+
         data = request.json
         if 'name' in data:
             net.name = data['name']
@@ -341,10 +351,24 @@ def handle_network(network_id):
         }), 200
 
 @bp.route('/clients', methods=['GET'])
+@require_login
 def get_clients():
+    user = AuthManager.get_current_user()
     clients = Client.query.all()
-    result = []
+    
+    # Filter clients: Must have CLIENT.VIEW or NETWORK.VIEW on their network
+    # has_permission('CLIENT', ... 'VIEW') helper handles the hierarchy check (if we implemented it correctly)
+    # Checking auth_manager.py again:
+    # "If scope_type is CLIENT ... Check if user has permission on any of the client's networks"
+    # Yes, it does.
+    
+    visible_clients = []
     for c in clients:
+        if AuthManager.has_permission(user, 'CLIENT', c.id, 'VIEW'):
+            visible_clients.append(c)
+            
+    result = []
+    for c in visible_clients:
         # Calculate full IP addresses for this client
         ips = []
         for net in c.networks:
@@ -374,10 +398,25 @@ def get_clients():
     return jsonify(result)
 
 @bp.route('/clients', methods=['POST'])
+@require_login
 def create_client():
+    user = AuthManager.get_current_user()
     data = request.json
     name = data['name']
     network_ids = data.get('networks', [])
+    
+    # Verify Permissions on Networks
+    if not network_ids:
+        # If no networks, maybe checking GLOBAL CREATE permission? 
+        # But clients must be attached to something usually.
+        # Let's say if no networks, checking GLOBAL MODIFY (as general "can do anything" fallback)
+        if not AuthManager.has_permission(user, 'GLOBAL', None, 'MODIFY'):
+             return jsonify({'error': 'Forbidden'}), 403
+    else:
+        for nid in network_ids:
+            if not AuthManager.has_permission(user, 'NETWORK', nid, 'MODIFY'):
+                return jsonify({'error': f'No permission to add clients to network {nid}'}), 403
+
     keepalive = data.get('keepalive') # Optional int
     routed_cidrs = data.get('routes', []) # List of strings e.g. ["192.168.1.0/24"]
     dns_mode = data.get('dns_mode', 'default')  # 'default', 'custom', or 'none'
@@ -441,7 +480,14 @@ def create_client():
     }), 201
 
 @bp.route('/clients/<int:client_id>', methods=['PUT'])
+@require_login
 def update_client(client_id):
+    user = AuthManager.get_current_user()
+    
+    # Check permissions (MODIFY on Client implies enough rights, but we might want to check network moves)
+    if not AuthManager.has_permission(user, 'CLIENT', client_id, 'MODIFY'):
+        return jsonify({'error': 'Forbidden'}), 403
+
     client = db.session.get(Client, client_id)
     if not client:
          return jsonify({'error': 'Client not found'}), 404
@@ -492,6 +538,12 @@ def update_client(client_id):
     if 'networks' in data:
         new_networks = []
         for nid in network_ids:
+            # Check permission to move/add to this network
+            # Technically should check if we are removing from old ones too? 
+            # For simplicity, just check if we have MODIFY on target networks.
+            if not AuthManager.has_permission(user, 'NETWORK', nid, 'MODIFY'):
+                 return jsonify({'error': f'No permission to use network {nid}'}), 403
+
             net = db.session.get(Network, nid)
             if net:
                 # Re-validate: existing octet must be valid in new new subnet
@@ -516,7 +568,12 @@ def update_client(client_id):
     })
 
 @bp.route('/clients/<int:client_id>', methods=['DELETE'])
+@require_login
 def delete_client(client_id):
+    user = AuthManager.get_current_user()
+    if not AuthManager.has_permission(user, 'CLIENT', client_id, 'DELETE'):
+        return jsonify({'error': 'Forbidden'}), 403
+        
     client = db.session.get(Client, client_id)
     if not client:
         return jsonify({'error': 'Client not found'}), 404
@@ -535,12 +592,17 @@ def delete_client(client_id):
     return jsonify({'status': 'deleted'}), 200
 
 @bp.route('/rules/client/<path:public_key>', methods=['GET'])
+@require_login
 def get_client_rules(public_key):
     # Depending on how the public key is passed (URL encoded or not), might need decoding.
     # Assuming simple string match for now.
+    user = AuthManager.get_current_user()
     client = Client.query.filter_by(public_key=public_key).first()
     if not client:
         return jsonify({'error': 'Client not found'}), 404
+        
+    if not AuthManager.has_permission(user, 'CLIENT', client.id, 'VIEW'):
+        return jsonify({'error': 'Forbidden'}), 403
         
     rules = AccessRule.query.filter_by(source_client_id=client.id).all()
     # Also fetch rules where this client is destination? 
@@ -558,10 +620,15 @@ def get_client_rules(public_key):
     } for r in rules])
 
 @bp.route('/rules/client/<path:public_key>', methods=['POST'])
+@require_login
 def create_client_rule(public_key):
+    user = AuthManager.get_current_user()
     client = Client.query.filter_by(public_key=public_key).first()
     if not client:
         return jsonify({'error': 'Client not found'}), 404
+    
+    if not AuthManager.has_permission(user, 'CLIENT', client.id, 'MODIFY'):
+        return jsonify({'error': 'Forbidden'}), 403
         
     data = request.json
     # DTO: destination (IP or CIDR), destination_type, port, proto, action
@@ -590,10 +657,16 @@ def create_client_rule(public_key):
     return jsonify({'id': rule.id}), 201
 
 @bp.route('/rules/<int:rule_id>', methods=['DELETE'])
+@require_login
 def delete_rule(rule_id):
+    user = AuthManager.get_current_user()
     rule = db.session.get(AccessRule, rule_id)
     if not rule:
         return jsonify({'error': 'Rule not found'}), 404
+    
+    # Check if user can modify the source client
+    if not AuthManager.has_permission(user, 'CLIENT', rule.source_client_id, 'MODIFY'):
+        return jsonify({'error': 'Forbidden'}), 403
     
     # Store info before deletion for full-tunnel status update
     client_id = rule.source_client_id
@@ -610,8 +683,17 @@ def delete_rule(rule_id):
     return jsonify({'status': 'deleted'}), 200
 
 @bp.route('/rules', methods=['GET'])
+@require_login
 def get_all_rules():
+    user = AuthManager.get_current_user()
     rules = AccessRule.query.all()
+    
+    # Filter rules: User must be able to VIEW the source client
+    visible_rules = []
+    for r in rules:
+        if AuthManager.has_permission(user, 'CLIENT', r.source_client_id, 'VIEW'):
+            visible_rules.append(r)
+            
     return jsonify([{
         'id': r.id,
         'source_client_id': r.source_client_id,
@@ -621,10 +703,15 @@ def get_all_rules():
         'port': r.port,
         'proto': r.proto,
         'action': r.action
-    } for r in rules])
+    } for r in visible_rules])
 
 @bp.route('/clients/<int:client_id>/config', methods=['GET'])
+@require_login
 def download_client_config(client_id):
+    user = AuthManager.get_current_user()
+    if not AuthManager.has_permission(user, 'CLIENT', client_id, 'VIEW'):
+        return jsonify({'error': 'Forbidden'}), 403
+    
     client = db.session.get(Client, client_id)
     if not client:
         return jsonify({'error': 'Client not found'}), 404

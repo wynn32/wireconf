@@ -7,12 +7,17 @@ import LiveStatus from './pages/LiveStatus';
 import SetupWizard from './pages/SetupWizard';
 import Topology from './pages/Topology';
 import ServerSettings from './pages/ServerSettings';
+import Login from './pages/Login';
+import UserManagement from './pages/UserManagement';
+import PresetManagement from './pages/PresetManagement';
+import { AuthProvider, useAuth } from './AuthContext';
 import api from './api';
 import './App.css';
 
-function App() {
+function AppRoutes() {
+  const { user, isLoading: authLoading } = useAuth();
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [setupLoading, setSetupLoading] = useState(true);
 
   useEffect(() => {
     checkSetupStatus();
@@ -24,17 +29,21 @@ function App() {
       setSetupComplete(res.data.setup_completed);
     } catch (err) {
       console.error('Failed to check setup status', err);
+      // If setup check fails, it might be connectivity or auth (though setup status is usually public?).
+      // Let's assume public.
       setSetupComplete(false);
     } finally {
-      setLoading(false);
+      setSetupLoading(false);
     }
   };
 
   const handleSetupComplete = () => {
     setSetupComplete(true);
+    // After setup, maybe reload to trigger auth check or create user?
+    window.location.reload();
   };
 
-  if (loading) {
+  if (setupLoading || authLoading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center">
         <div className="text-white text-xl">Loading...</div>
@@ -42,22 +51,35 @@ function App() {
     );
   }
 
-  if (!setupComplete) {
+  if (setupComplete === false) {
     return <SetupWizard onComplete={handleSetupComplete} />;
   }
 
   return (
+    <Layout>
+      <Routes>
+        <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+
+        <Route path="/networks" element={user ? <Networks /> : <Navigate to="/login" replace />} />
+        <Route path="/clients" element={user ? <Clients /> : <Navigate to="/login" replace />} />
+        <Route path="/status" element={user ? <LiveStatus /> : <Navigate to="/login" replace />} />
+        <Route path="/topology" element={user ? <Topology /> : <Navigate to="/login" replace />} />
+        <Route path="/settings" element={user ? <ServerSettings /> : <Navigate to="/login" replace />} />
+        <Route path="/users" element={user ? <UserManagement /> : <Navigate to="/login" replace />} />
+        <Route path="/presets" element={user ? <PresetManagement /> : <Navigate to="/login" replace />} />
+
+        <Route path="/" element={<Navigate to={user ? "/clients" : "/login"} replace />} />
+      </Routes>
+    </Layout>
+  );
+}
+
+function App() {
+  return (
     <Router>
-      <Layout>
-        <Routes>
-          <Route path="/networks" element={<Networks />} />
-          <Route path="/clients" element={<Clients />} />
-          <Route path="/status" element={<LiveStatus />} />
-          <Route path="/topology" element={<Topology />} />
-          <Route path="/settings" element={<ServerSettings />} />
-          <Route path="/" element={<Navigate to="/clients" replace />} />
-        </Routes>
-      </Layout>
+      <AuthProvider>
+        <AppRoutes />
+      </AuthProvider>
     </Router>
   );
 }

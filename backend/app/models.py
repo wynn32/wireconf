@@ -108,3 +108,53 @@ class ServerConfig(db.Model):
     installed: Mapped[bool] = mapped_column(default=False, nullable=False)
     setup_completed: Mapped[bool] = mapped_column(default=False, nullable=False)
 
+class PermissionPreset(db.Model):
+    """A named collection of permission rules that can be assigned to users."""
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    
+    rules: Mapped[List["PermissionPresetRule"]] = relationship(back_populates="preset", cascade="all, delete-orphan")
+    users: Mapped[List["User"]] = relationship(back_populates="preset")
+
+class PermissionPresetRule(db.Model):
+    """Individual permission rule in a preset."""
+    id: Mapped[int] = mapped_column(primary_key=True)
+    preset_id: Mapped[int] = mapped_column(ForeignKey("permission_preset.id"), nullable=False)
+    
+    scope_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    scope_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    permission_level: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    preset: Mapped["PermissionPreset"] = relationship(back_populates="rules")
+
+class User(db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    is_root: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False) # Unix timestamp
+    preset_id: Mapped[Optional[int]] = mapped_column(ForeignKey("permission_preset.id"), nullable=True)
+
+    permissions: Mapped[List["Permission"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    preset: Mapped[Optional["PermissionPreset"]] = relationship(back_populates="users")
+
+class Permission(db.Model):
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
+    
+    # Scope Type: 'global', 'network', 'client'
+    scope_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    
+    # Scope ID: ID of the Network or Client (NULL if global)
+    scope_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    
+    # Permission Level/Capability: 'VIEW', 'MODIFY', 'CREATE', 'DELETE', 'OVERRIDE_DMS', 'MANAGE_USERS'
+    permission_level: Mapped[str] = mapped_column(String(50), nullable=False)
+    
+    # Override flag: If true, this permission overrides preset permissions
+    is_override: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+    user: Mapped["User"] = relationship(back_populates="permissions")
+

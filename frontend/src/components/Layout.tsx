@@ -2,15 +2,24 @@ import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import api from '../api';
 import CommitModal from './CommitModal';
+import { useAuth } from '../AuthContext';
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const location = useLocation();
+    const { user, logout, hasPermission } = useAuth();
+
     const [statusMsg, setStatusMsg] = useState('');
     const [showCommitModal, setShowCommitModal] = useState(false);
 
     // Safety Mechanism State
     const [safetyState, setSafetyState] = useState<'idle' | 'committing' | 'verifying' | 'reverting'>('idle');
     const [countdown, setCountdown] = useState(60);
+
+    // If on login page or not logged in, don't show Nav (unless we want to show a simple header)
+    // Actually, if we are in Layout but user is null, we should probably just render children (Login page).
+    if (!user) {
+        return <div className="min-h-screen bg-slate-900 text-slate-100 font-sans">{children}</div>;
+    }
 
     const handleConfirmCommit = async (useSafety: boolean) => {
         setShowCommitModal(false);
@@ -105,15 +114,34 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                         <Link to="/" className="group">
                             <img src="/logo.svg" alt="WireConf" className="h-10 transition-transform group-hover:scale-105" />
                         </Link>
-                        <div className="space-x-2">
+                        <div className="space-x-2 flex items-center">
                             <Link to="/clients" className={navClass('/clients')}>Clients</Link>
                             <Link to="/status" className={navClass('/status')}>Live Status</Link>
                             <Link to="/networks" className={navClass('/networks')}>Networks</Link>
                             <Link to="/topology" className={navClass('/topology')}>Topology</Link>
                             <Link to="/settings" className={navClass('/settings')}>Settings</Link>
+
+                            {hasPermission('GLOBAL', null, 'MANAGE_USERS') && (
+                                <>
+                                    <Link to="/users" className={navClass('/users')}>Users</Link>
+                                    <Link to="/presets" className={navClass('/presets')}>Presets</Link>
+                                </>
+                            )}
                         </div>
                     </div>
                     <div className="flex items-center space-x-4">
+                        <div className="text-right mr-2 hidden md:block">
+                            <div className="text-xs text-slate-400">Logged in as</div>
+                            <div className="font-bold text-sm text-indigo-400">{user.username}</div>
+                        </div>
+
+                        <button
+                            onClick={() => logout()}
+                            className="text-slate-400 hover:text-white text-sm bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded transition-colors"
+                        >
+                            Logout
+                        </button>
+
                         {statusMsg && (
                             <span className={`text-sm ${statusMsg.startsWith('Error') ? 'text-red-400' : 'text-emerald-400'}`}>
                                 {statusMsg}
