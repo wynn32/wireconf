@@ -4,3 +4,4 @@ SQLAlchemy==2.0.25
 netaddr==0.10.1
 python-dotenv
 flask-cors
+gunicorn

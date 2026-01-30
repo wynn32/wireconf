@@ -1,0 +1,52 @@
+services:
+  # Option 1: Standalone All-in-One
+  wireconf:
+    build: .
+    container_name: wireconf
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+    volumes:
+      - ./backend/instance:/app/backend/instance
+      - /lib/modules:/lib/modules
+      - /etc/wireguard:/etc/wireguard
+    ports:
+      - "${WEB_PORT:-80}:80"           # Web UI + API (Proxied)
+      - "${WG_PORT:-51820}:51820/udp" # WireGuard
+    environment:
+      - ENABLE_IP_FORWARD=true
+      - VITE_API_URL=/api
+    restart: unless-stopped
+
+  # Option 2: Sidecar Example (Commented out by default)
+  # wireconf-sidecar:
+  #   build: .
+  #   container_name: wireconf-mgmt
+  #   network_mode: "service:wireguard-server"
+  #   volumes:
+  #     - ./backend/instance:/app/backend/instance
+  #     - shared-conf:/etc/wireguard
+  #   depends_on:
+  #     - wireguard-server
+
+  # wireguard-server:
+  #   image: linuxserver/wireguard:latest
+  #   container_name: wireguard-server
+  #   cap_add:
+  #     - NET_ADMIN
+  #     - SYS_MODULE
+  #   environment:
+  #     - PUID=1000
+  #     - PGID=1000
+  #     - TZ=Etc/UTC
+  #   volumes:
+  #     - shared-conf:/config
+  #     - /lib/modules:/lib/modules
+  #   ports:
+  #     - "51821:51820/udp"
+  #   restart: unless-stopped
+
+# volumes:
+#   shared-conf:
