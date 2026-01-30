@@ -8,6 +8,16 @@ INSTALL_DIR="/opt/wireconf"
 BACKEND_DIR="$INSTALL_DIR/backend"
 FRONTEND_DIR="$INSTALL_DIR/frontend"
 VENV_DIR="$BACKEND_DIR/venv"
+FORCE_OVERWRITE=false
+
+# Parse arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -f|--force) FORCE_OVERWRITE=true ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
 
 echo "================================================"
 echo "  WireGuard Management System - Production Installer"
@@ -58,11 +68,15 @@ if [ -f "$BACKEND_DIR/.env" ]; then
 fi
 : "${CURRENT_WG_PATH:=/etc/wireguard/wg0.conf}"
 
-read -p "Enter WireGuard config path [$CURRENT_WG_PATH]: " WG_PATH
-WG_PATH=${WG_PATH:-$CURRENT_WG_PATH}
+if [ ! -f "$BACKEND_DIR/.env" ] || [ "$FORCE_OVERWRITE" = true ]; then
+    read -p "Enter WireGuard config path [$CURRENT_WG_PATH]: " WG_PATH
+    WG_PATH=${WG_PATH:-$CURRENT_WG_PATH}
 
-echo "WG_CONFIG_PATH=$WG_PATH" > "$BACKEND_DIR/.env"
-echo "WireGuard config path set to $WG_PATH"
+    echo "WG_CONFIG_PATH=$WG_PATH" > "$BACKEND_DIR/.env"
+    echo "WireGuard config path set to $WG_PATH"
+else
+    echo "  ! Backend .env exists, skipping configuration prompt (use --force to overwrite)"
+fi
 
 # Setup Python Virtual Environment and Backend
 echo "Setting up backend..."
@@ -84,6 +98,7 @@ case $DISTRO in
         ;;
 esac
 
+if [ ! -f "$NGINX_CONF" ] || [ "$FORCE_OVERWRITE" = true ]; then
 cat > "$NGINX_CONF" <<EOF
 server {
     listen 127.0.0.1:80;
@@ -104,6 +119,9 @@ server {
     }
 }
 EOF
+else
+    echo "  ! Nginx configuration exists at $NGINX_CONF, skipping (use --force to overwrite)"
+fi
 
 if [ "$DISTRO" != "alpine" ]; then
     ln -sf "$NGINX_CONF" "$NGINX_LINK"
@@ -114,7 +132,8 @@ fi
 echo "Configuring system services..."
 if [ "$DISTRO" = "alpine" ]; then
     # OpenRC for Alpine
-    cat > /etc/init.d/wireconf <<EOF
+    if [ ! -f /etc/init.d/wireguard-mgmt ] || [ "$FORCE_OVERWRITE" = true ]; then
+    cat > /etc/init.d/wireguard-mgmt <<EOF
 #!/sbin/openrc-run
 
 description="WireGuard Management Backend"
@@ -142,12 +161,14 @@ start_pre() {
     fi
 }
 EOF
-chmod +x /etc/init.d/wireconf
-    rc-update add wireconf default
+chmod +x /etc/init.d/wireguard-mgmt
+    fi
+    rc-update add wireguard-mgmt default
     rc-update add nginx default
 else
     # Systemd for Debian/Fedora
-    cat > /etc/systemd/system/wireconf.service <<EOF
+    if [ ! -f /etc/systemd/system/wireguard-mgmt.service ] || [ "$FORCE_OVERWRITE" = true ]; then
+    cat > /etc/systemd/system/wireguard-mgmt.service <<EOF
 [Unit]
 Description=Gunicorn instance to serve WireGuard Management Backend
 After=network.target
@@ -163,6 +184,7 @@ Restart=always
 [Install]
 WantedBy=multi-user.target
 EOF
+    fi
     systemctl daemon-reload
     systemctl enable wireconf
     systemctl enable nginx
