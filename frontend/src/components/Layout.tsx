@@ -35,9 +35,9 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             <nav className="bg-slate-800 border-b border-slate-700 p-4 sticky top-0 z-50 shadow-lg">
                 <div className="container mx-auto flex justify-between items-center">
                     <div className="flex items-center space-x-6">
-                        <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">
-                            WireGuard Manager
-                        </h1>
+                        <Link to="/" className="group">
+                            <img src="/logo.svg" alt="WireConf" className="h-10 transition-transform group-hover:scale-105" />
+                        </Link>
                         <div className="space-x-2">
                             <Link to="/clients" className={navClass('/clients')}>Clients</Link>
                             <Link to="/networks" className={navClass('/networks')}>Networks</Link>
