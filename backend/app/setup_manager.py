@@ -5,6 +5,7 @@ Setup Manager - Handles installation status, server configuration, and setup wiz
 import os
 import subprocess
 from .models import db, ServerConfig
+from .command_utils import get_command_path
 from .key_manager import KeyManager
 
 class SetupManager:
@@ -86,8 +87,10 @@ class SetupManager:
     def add_firewall_rule(port: int):
         """Add iptables rule to allow WireGuard traffic."""
         try:
+            # Find iptables path
+            iptables_path = get_command_path("iptables")
             # Check if rule already exists
-            check_cmd = f"iptables -C INPUT -p udp --dport {port} -j ACCEPT 2>/dev/null"
+            check_cmd = f"{iptables_path} -C INPUT -p udp --dport {port} -j ACCEPT 2>/dev/null"
             result = subprocess.run(check_cmd, shell=True, capture_output=True)
             
             if result.returncode == 0:
@@ -95,19 +98,21 @@ class SetupManager:
                 return True
             
             # Add the rule
-            add_cmd = f"iptables -A INPUT -p udp --dport {port} -j ACCEPT"
+            add_cmd = f"{iptables_path} -A INPUT -p udp --dport {port} -j ACCEPT"
             subprocess.run(add_cmd, shell=True, check=True)
             print(f"✓ Added firewall rule for UDP port {port}")
             
             # Try to save rules persistently
             try:
                 # Try netfilter-persistent first (Debian/Ubuntu)
-                subprocess.run("netfilter-persistent save", shell=True, check=True, stderr=subprocess.DEVNULL)
+                np_path = get_command_path("netfilter-persistent")
+                subprocess.run(f"{np_path} save", shell=True, check=True, stderr=subprocess.DEVNULL)
                 print("✓ Firewall rules saved persistently (netfilter-persistent)")
             except:
                 try:
                     # Fallback to iptables-save
-                    subprocess.run("iptables-save > /etc/iptables/rules.v4", shell=True, check=True)
+                    iptables_save_path = get_command_path("iptables-save")
+                    subprocess.run(f"{iptables_save_path} > /etc/iptables/rules.v4", shell=True, check=True)
                     print("✓ Firewall rules saved persistently (iptables-save)")
                 except:
                     print("⚠ Warning: Could not save firewall rules persistently")

@@ -46,6 +46,7 @@ class Client(db.Model):
     dns_servers: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)  # Comma-separated IPs
     
     tags: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # Comma-separated tags
+    is_full_tunnel: Mapped[bool] = mapped_column(default=False, nullable=False)  # Uses 0.0.0.0/0 AllowedIPs
 
     networks: Mapped[List["Network"]] = relationship(
         secondary=client_network_association, back_populates="clients"

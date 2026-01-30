@@ -1,6 +1,7 @@
 import subprocess
 import os
 import shutil
+from .command_utils import get_command_path
 
 class SystemService:
     @staticmethod
@@ -44,7 +45,8 @@ class SystemService:
         # 2. Check if interface is up
         is_up = False
         try:
-            subprocess.run(["ip", "link", "show", interface_name], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            ip_path = get_command_path("ip")
+            subprocess.run([ip_path, "link", "show", interface_name], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             is_up = True
         except:
             pass
@@ -57,7 +59,7 @@ class SystemService:
             cmd = f"wg syncconf {interface_name} <(wg-quick strip {config_path})"
             print(f"Executing: {cmd}")
             try:
-                subprocess.run(["bash", "-c", cmd], check=True)
+                subprocess.run(["/bin/bash", "-c", cmd], check=True)
             except subprocess.CalledProcessError as e:
                 print(f"Syncconf failed: {str(e)}")
                 # Fallback to restart if syncconf fails? User said "look into hot-reload smartly"
@@ -100,12 +102,14 @@ class SystemService:
             else:
                 exists = False
                 try:
-                    subprocess.run(["ip", "link", "show", interface_name], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    ip_path = get_command_path("ip")
+                    subprocess.run([ip_path, "link", "show", interface_name], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     exists = True
                 except:
                     pass
                 if exists:
-                    SystemService._run_command(["wg-quick", "down", interface_name], check=False)
+                    wg_quick_path = get_command_path("wg-quick")
+                    SystemService._run_command([wg_quick_path, "down", interface_name], check=False)
         
         # 3. Write New Config
         SystemService._write_config(new_config_content, config_path)

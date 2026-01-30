@@ -84,9 +84,16 @@ class ConfigImporter:
                             
                             priv_key = client_data.get('privatekey')
                             if not priv_key:
+                                print(f"DEBUG: No privatekey found in {member.name}")
                                 continue
                             
-                            client_pub = KeyManager.generate_public_key(priv_key)
+                            try:
+                                client_pub = KeyManager.generate_public_key(priv_key)
+                            except Exception as key_gen_error:
+                                print(f"ERROR: Failed to generate public key from {member.name}: {key_gen_error}")
+                                continue
+                            
+                            print(f"DEBUG: Derived public key from {member.name}: {client_pub}")
                             
                             # Extract server endpoint from the first client config we find
                             if not server_endpoint and client_peers:
@@ -103,8 +110,14 @@ class ConfigImporter:
                                 # Address in client config is the IP it uses on the interface
                                 if client_data.get('address'):
                                     peers_map[client_pub]['address'] = client_data.get('address')
+                                print(f"DEBUG: Matched {member.name} to peer {client_pub}")
+                            else:
+                                print(f"DEBUG: No peer found for derived public key {client_pub} from {member.name}")
+                                print(f"DEBUG: Available peers_map keys: {list(peers_map.keys())}")
                         except Exception as e:
                             print(f"Error processing client config {member.name}: {e}")
+                            import traceback
+                            traceback.print_exc()
                             continue
 
                 final_peers = list(peers_map.values())
@@ -534,6 +547,7 @@ class ConfigImporter:
                     octet=target_octet,
                     keepalive=cp['keepalive'],
                     enabled=True,
+                    is_full_tunnel=cp.get('is_full_tunnel', False),
                     dns_mode='default'
                 )
                 db.session.add(new_client)

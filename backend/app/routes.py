@@ -221,7 +221,8 @@ def get_clients():
             'routes': [r.target_cidr for r in c.routes],
             'dns_mode': c.dns_mode,
             'dns_servers': c.dns_servers,
-            'tags': c.tags.split(',') if c.tags else []
+            'tags': c.tags.split(',') if c.tags else [],
+            'is_full_tunnel': c.is_full_tunnel
         })
     
     return jsonify(result)
@@ -413,6 +414,12 @@ def create_client_rule(public_key):
     )
     db.session.add(rule)
     db.session.commit()
+    
+    # Update full-tunnel status if this is a 0.0.0.0/0 rule
+    if destination == '0.0.0.0/0':
+        update_client_full_tunnel_status(client.id)
+        db.session.commit()
+    
     return jsonify({'id': rule.id}), 201
 
 @bp.route('/rules/<int:rule_id>', methods=['DELETE'])
@@ -420,8 +427,19 @@ def delete_rule(rule_id):
     rule = db.session.get(AccessRule, rule_id)
     if not rule:
         return jsonify({'error': 'Rule not found'}), 404
+    
+    # Store info before deletion for full-tunnel status update
+    client_id = rule.source_client_id
+    was_full_tunnel_rule = rule.dest_cidr == '0.0.0.0/0'
+    
     db.session.delete(rule)
     db.session.commit()
+    
+    # Update full-tunnel status if we deleted a 0.0.0.0/0 rule
+    if was_full_tunnel_rule:
+        update_client_full_tunnel_status(client_id)
+        db.session.commit()
+    
     return jsonify({'status': 'deleted'}), 200
 
 @bp.route('/rules', methods=['GET'])

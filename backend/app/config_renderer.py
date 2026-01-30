@@ -1,6 +1,7 @@
 import os
 from .models import Network, Client, AccessRule, Route
 from .ip_manager import IPManager
+from .command_utils import get_command_path
 from typing import List
 
 class ConfigRenderer:
@@ -228,17 +229,23 @@ PresharedKey = {client.preshared_key}
         up = []
         down = []
         
+        # Get the full path to iptables
+        try:
+            iptables_path = get_command_path("iptables")
+        except Exception:
+            iptables_path = "iptables"  # Fallback for legacy behavior
+        
         CHAIN_NAME = "WG_ACCESS_CONTROL"
         TEMP_CHAIN = "WG_ACCESS_TEMP"
         
         # --- PostUp ---
         
         # 0. Global Setup (Persistent across updates)
-        up.append("iptables -P FORWARD DROP")
-        up.append("iptables -C FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || iptables -I FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT")
+        up.append(f"{iptables_path} -P FORWARD DROP")
+        up.append(f"{iptables_path} -C FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || {iptables_path} -I FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT")
         
         # 1. Create/Flush Temp Chain
-        up.append(f"iptables -N {TEMP_CHAIN} 2>/dev/null || iptables -F {TEMP_CHAIN}")
+        up.append(f"{iptables_path} -N {TEMP_CHAIN} 2>/dev/null || {iptables_path} -F {TEMP_CHAIN}")
         
         # 2. Process Rules (Targeting TEMP_CHAIN)
         # Sort rules: DROP first to prevent shadowing by broad ACCEPT rules
@@ -288,29 +295,29 @@ PresharedKey = {client.preshared_key}
                         
                     cmd_parts.append(f"-j {rule.action}")
                     
-                    up.append(f"iptables {' '.join(cmd_parts)}")
+                    up.append(f"{iptables_path} {' '.join(cmd_parts)}")
 
         # 3. Atomic Swap
         # We insert TEMP_CHAIN, then remove OLD, then rename TEMP to OLD.
         # This replaces the entire rule set with practically zero gap.
-        up.append(f"iptables -I FORWARD -j {TEMP_CHAIN}")
-        up.append(f"iptables -D FORWARD -j {CHAIN_NAME} 2>/dev/null || true")
-        up.append(f"iptables -F {CHAIN_NAME} 2>/dev/null || true")
-        up.append(f"iptables -X {CHAIN_NAME} 2>/dev/null || true")
-        up.append(f"iptables -E {TEMP_CHAIN} {CHAIN_NAME}")
+        up.append(f"{iptables_path} -I FORWARD -j {TEMP_CHAIN}")
+        up.append(f"{iptables_path} -D FORWARD -j {CHAIN_NAME} 2>/dev/null || true")
+        up.append(f"{iptables_path} -F {CHAIN_NAME} 2>/dev/null || true")
+        up.append(f"{iptables_path} -X {CHAIN_NAME} 2>/dev/null || true")
+        up.append(f"{iptables_path} -E {TEMP_CHAIN} {CHAIN_NAME}")
 
         # --- PostDown ---
         # 1. Remove Jump
-        down.append(f"iptables -D FORWARD -j {CHAIN_NAME} 2>/dev/null || true")
+        down.append(f"{iptables_path} -D FORWARD -j {CHAIN_NAME} 2>/dev/null || true")
         
         # 2. Flush Chain
-        down.append(f"iptables -F {CHAIN_NAME} 2>/dev/null || true")
+        down.append(f"{iptables_path} -F {CHAIN_NAME} 2>/dev/null || true")
         
         # 3. Delete Chain
-        down.append(f"iptables -X {CHAIN_NAME} 2>/dev/null || true")
+        down.append(f"{iptables_path} -X {CHAIN_NAME} 2>/dev/null || true")
         
         # 4. Restore Default Policy (Avoid lockout)
-        down.append("iptables -P FORWARD ACCEPT")
+        down.append(f"{iptables_path} -P FORWARD ACCEPT")
         
         # Also cleanup global rules if we added them?
         # Providing strict symmetry for global rules is tricky if they are generic.
