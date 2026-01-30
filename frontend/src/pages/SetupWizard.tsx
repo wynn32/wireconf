@@ -44,6 +44,9 @@ const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
         try {
             const res = await api.get('/setup/status');
             setInstalled(res.data.installed);
+            if (res.data.installed) {
+                setStep(2);
+            }
         } catch (err) {
             console.error('Failed to check install status', err);
         }
@@ -400,8 +403,8 @@ const SetupWizard: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
                                                 type="button"
                                                 onClick={() => toggleNetwork(net.id)}
                                                 className={`px-3 py-1 rounded text-sm transition-all ${selectedNetworks.includes(net.id)
-                                                        ? 'bg-blue-600 text-white'
-                                                        : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                                                    ? 'bg-blue-600 text-white'
+                                                    : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                                                     }`}
                                             >
                                                 {net.name}

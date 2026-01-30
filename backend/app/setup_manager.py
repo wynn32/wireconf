@@ -135,6 +135,19 @@ class SetupManager:
         return True
     
     @staticmethod
+    def check_host_config():
+        """Check if there's existing content in the host WireGuard config."""
+        config_path = os.environ.get("WG_CONFIG_PATH", "/etc/wireguard/wg0.conf")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, "r") as f:
+                    content = f.read().strip()
+                    return len(content) > 0
+            except:
+                pass
+        return False
+
+    @staticmethod
     def get_setup_status():
         """Get current setup status."""
         config = SetupManager.get_server_config()
@@ -144,5 +157,6 @@ class SetupManager:
             'server_configured': bool(config.server_endpoint and config.server_private_key),
             'server_endpoint': config.server_endpoint,
             'server_port': config.server_port,
-            'server_public_key': config.server_public_key
+            'server_public_key': config.server_public_key,
+            'has_existing_host_config': SetupManager.check_host_config()
         }

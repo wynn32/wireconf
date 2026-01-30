@@ -123,6 +123,9 @@ command_args="--workers 3 --bind 127.0.0.1:5000 run:app"
 command_background="yes"
 directory="$BACKEND_DIR"
 pidfile="/run/wireguard-mgmt.pid"
+start_stop_daemon_args="--make-pidfile"
+output_log="/var/log/wireguard-mgmt.log"
+error_log="/var/log/wireguard-mgmt.err"
 
 depend() {
     need net
