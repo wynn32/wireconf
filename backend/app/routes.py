@@ -10,6 +10,32 @@ import io
 bp = Blueprint('api', __name__, url_prefix='/api')
 
 # ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
+
+def update_client_full_tunnel_status(client_id):
+    """
+    Update the is_full_tunnel flag for a client based on their access rules.
+    
+    A client is considered to have full tunnel access if they have a rule
+    allowing access to 0.0.0.0/0 (all destinations).
+    
+    Args:
+        client_id: The ID of the client to update
+    """
+    client = db.session.get(Client, client_id)
+    if not client:
+        return
+    
+    # Check if client has any rule with dest_cidr == '0.0.0.0/0'
+    full_tunnel_rule = AccessRule.query.filter(
+        AccessRule.source_client_id == client_id,
+        AccessRule.dest_cidr == '0.0.0.0/0'
+    ).first()
+    
+    client.is_full_tunnel = full_tunnel_rule is not None
+
+# ============================================================================
 # SETUP ENDPOINTS
 # ============================================================================
 
