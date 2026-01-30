@@ -1,27 +1,129 @@
 import ipaddress
 import re
-from .models import db, Client, Network, Route, ServerConfig, AccessRule
+import tarfile
+import io
+import os
+import shutil
+from .models import db, Client, Network, Route, ServerConfig, AccessRule, client_network_association
 from .key_manager import KeyManager
 from .setup_manager import SetupManager
 
 class ConfigImporter:
+    @staticmethod
+    def process_backup(file_stream, force_purge=False):
+        """
+        Processes a PiVPN backup .tgz file.
+        Returns a dict with 'status' and 'stats' or 'mismatch_detected'.
+        """
+        try:
+            with tarfile.open(fileobj=file_stream, mode="r:gz") as tar:
+                # 1. Find Server Config
+                # PiVPN backup structure: etc/wireguard/wg0.conf
+                server_conf_path = None
+                for member in tar.getmembers():
+                    if member.name.endswith('wg0.conf'):
+                        server_conf_path = member.name
+                        break
+                
+                if not server_conf_path:
+                    # Try etc/wireguard/pivpn.conf if wg0.conf is missing
+                    for member in tar.getmembers():
+                        if member.name.endswith('pivpn.conf'):
+                            server_conf_path = member.name
+                            break
+
+                if not server_conf_path:
+                    raise Exception("Server configuration (wg0.conf) not found in backup.")
+
+                server_content = tar.extractfile(server_conf_path).read().decode('utf-8')
+                server_data, _ = ConfigImporter._parse_ini_content(server_content)
+
+                # 2. Key Mismatch Check
+                current_config = SetupManager.get_server_config()
+                imported_pk = server_data.get('privatekey')
+                
+                if current_config.server_private_key and current_config.setup_completed:
+                    if imported_pk and current_config.server_private_key != imported_pk:
+                        if not force_purge:
+                            return {
+                                'status': 'mismatch',
+                                'message': 'Imported server key does not match current key. Purge database and continue?'
+                            }
+
+                # 3. Find Client Configs
+                # PiVPN backup structure: home/<user>/configs/*.conf
+                client_peers = []
+                for member in tar.getmembers():
+                    if member.name.endswith('.conf') and 'configs/' in member.name:
+                        # Skip wg0.conf if it was caught here
+                        if member.name == server_conf_path:
+                            continue
+                        
+                        client_content = tar.extractfile(member).read().decode('utf-8')
+                        client_data, peers = ConfigImporter._parse_ini_content(client_content)
+                        
+                        # Client data is in [Interface], server is in [Peer]
+                        if not client_data.get('privatekey'):
+                            continue # Not a valid client config
+                        
+                        # We only expect ONE [Peer] in a client config (the server)
+                        # But we care about the [Interface] for the client's own keys and AllowedIPs (from Peer)
+                        # Actually, PiVPN client configs have AllowedIPs in the [Peer] block (server)
+                        # pointing to what the client can access.
+                        
+                        client_name = os.path.basename(member.name).replace('.conf', '')
+                        
+                        # PiVPN client config structure:
+                        # [Interface]
+                        # PrivateKey = ...
+                        # Address = ...
+                        #
+                        # [Peer]
+                        # PublicKey = <server_pub>
+                        # AllowedIPs = ...
+                        # PersistentKeepalive = ...
+                        
+                        # We need to extract AllowedIPs and Keepalive from the FIRST peer (the server)
+                        first_peer = peers[0] if peers else {}
+                        
+                        client_peers.append({
+                            'name': client_name,
+                            'privatekey': client_data.get('privatekey'),
+                            'address': client_data.get('address'),
+                            'publickey': KeyManager.generate_public_key(client_data.get('privatekey')),
+                            'presharedkey': first_peer.get('presharedkey'),
+                            'allowedips': first_peer.get('allowedips'),
+                            'persistentkeepalive': first_peer.get('persistentkeepalive')
+                        })
+
+                return {
+                    'status': 'success',
+                    'stats': ConfigImporter._import_to_db(server_data, client_peers, force_purge=force_purge)
+                }
+        except Exception as e:
+            raise e
+
     @staticmethod
     def process_config_content(content: str):
         """
         Parses wireguard config content and imports into database.
         Returns stats dict of what was imported.
         """
+        server_data, peers = ConfigImporter._parse_ini_content(content)
+        return ConfigImporter._import_to_db(server_data, peers)
+
+    @staticmethod
+    def _parse_ini_content(content: str):
+        """
+        Generic parser for WireGuard INI files.
+        """
         lines = content.splitlines()
-        
         current_section = None
-        server_data = {}
+        interface_data = {}
         peers = []
         current_peer = {}
         
-        # Regex for capturing "Name: Value" comments for client names
         name_comment_re = re.compile(r'#\s*(?:Name:)?\s*([a-zA-Z0-9_\-]+)')
-
-        # Pass 1: Parse INI-like structure manually (standard ConfigParser ignores dupes)
         last_comment_name = None
         
         for line in lines:
@@ -29,80 +131,72 @@ class ConfigImporter:
             if not line:
                 last_comment_name = None
                 continue
-                
             if line.startswith('#'):
-                # Try to capture name from comment
                 match = name_comment_re.search(line)
                 if match:
                     last_comment_name = match.group(1)
                 continue
-            
             if line.startswith('[') and line.endswith(']'):
-                # New Section
                 section_name = line[1:-1].lower()
-                
                 if section_name == 'interface':
                     current_section = 'interface'
                 elif section_name == 'peer':
-                    # Save previous peer if exists
                     if current_peer:
                         peers.append(current_peer)
                     current_section = 'peer'
                     current_peer = {'_comment_name': last_comment_name}
                     last_comment_name = None
                 continue
-            
             if '=' in line:
                 key, val = line.split('=', 1)
                 key = key.strip().lower()
                 val = val.strip()
-                
                 if current_section == 'interface':
-                    server_data[key] = val
+                    interface_data[key] = val
                 elif current_section == 'peer':
                     current_peer[key] = val
-        
-        # Capture last peer
         if current_peer:
             peers.append(current_peer)
-            
-        return ConfigImporter._import_to_db(server_data, peers)
+        return interface_data, peers
 
     @staticmethod
-    def _import_to_db(server_data, peers_data):
+    def _import_to_db(server_data, peers_data, force_purge=False):
         stats = {
             'server_updated': False,
             'networks_created': 0,
             'clients_created': 0,
-            'routes_created': 0
+            'routes_created': 0,
+            'access_rules_created': 0
         }
         
         try:
+            if force_purge:
+                # Purge everything
+                AccessRule.query.delete()
+                Route.query.delete()
+                # Clear associations first
+                db.session.execute(db.delete(client_network_association))
+                Client.query.delete()
+                Network.query.delete()
+                db.session.commit()
+
             # 1. Update Server Config
             server_config = SetupManager.get_server_config()
             
-            # Keys
             pk = server_data.get('privatekey')
             if pk:
                 server_config.server_private_key = pk
-                # Use key manager to derive public if possible, or wait
                 try:
                     server_config.server_public_key = KeyManager.generate_public_key(pk)
                 except:
                     pass 
             else:
-                # Placeholder if missing
                 if not server_config.server_private_key:
                     server_config.server_private_key = "IMPORT_MISSING_PRIVATE_KEY"
 
-            # Port
             port = server_data.get('listenport')
             if port:
                 server_config.server_port = int(port)
-            
-            # Endpoint (try to find from comments or just existing?)
-            # Config files usually don't have their own endpoint in [Interface]
-            # We keep existing or placeholder
             
             server_config.installed = True
             server_config.setup_completed = True
@@ -110,7 +204,6 @@ class ConfigImporter:
             db.session.commit()
             
             # 2. Extract Networks from [Interface] Address
-            # Format: 10.0.0.1/24, fd00::1/64
             addresses = server_data.get('address', '').split(',')
             server_networks = [] # List of ipaddress.IPv4Network
             
@@ -118,13 +211,9 @@ class ConfigImporter:
                 addr_str = addr_str.strip()
                 if not addr_str: continue
                 try:
-                    # addr_str is like 10.0.0.1/24. 
-                    # We want the network: 10.0.0.0/24
-                    # and the interface ip: 10.0.0.1/24
-                    
                     if_interface = ipaddress.ip_interface(addr_str)
                     if isinstance(if_interface, ipaddress.IPv6Interface):
-                        continue # Skipping IPv6 for now as per previous constraints? Or add support.
+                        continue # Skipping IPv6
                         
                     network_obj = if_interface.network
                     
@@ -132,9 +221,7 @@ class ConfigImporter:
                     existing_net = Network.query.filter_by(cidr=str(network_obj)).first()
                     
                     if not existing_net:
-                        # Infer name
-                        net_name = f"imported_net_{network_obj.network_address}"
-                        
+                        net_name = f"net_{network_obj.network_address}"
                         new_net = Network(
                             name=net_name,
                             cidr=str(network_obj),
@@ -150,7 +237,6 @@ class ConfigImporter:
                 except Exception as e:
                     print(f"Skipping invalid address: {addr_str} error: {e}")
                     
-            # Refetch networks to have IDs
             all_db_networks = Network.query.all()
             
             # 3. Import Peers
@@ -163,26 +249,56 @@ class ConfigImporter:
                 if existing_client:
                     continue # Skip duplicates
                 
-                # Name strategy
-                name = p.get('_comment_name')
+                name = p.get('name') or p.get('_comment_name')
                 if not name:
                     name = f"client_{pub_key[:5]}"
                 
-                # AllowedIPs = Client IP(s) + Routes
+                # Addresses = Client's own tunnel IP(s)
+                # AllowedIPs = Networks/Hosts this client can access
+                client_addresses = p.get('address', '').split(',')
                 allowed_ips = p.get('allowedips', '').split(',')
                 
                 client_networks_to_join = []
-                client_routes = []
-                client_octet = 0 # Try to preserve last octet of first IP
+                client_access_rules = [] # List of CIDRs
+                client_octet = 0 
                 
+                # First pass: identify networks and octet from the client's own addresses
+                for addr_str in client_addresses:
+                    addr_str = addr_str.strip()
+                    if not addr_str: continue
+                    try:
+                        if_obj = ipaddress.ip_interface(addr_str)
+                        if isinstance(if_obj, ipaddress.IPv6Interface): continue
+                        
+                        ip_addr = if_obj.ip
+                        matched_net = None
+                        for net_obj in server_networks:
+                            if ip_addr in net_obj:
+                                matched_net = net_obj
+                                break
+                        
+                        if matched_net:
+                            db_net = next((n for n in all_db_networks if n.cidr == str(matched_net)), None)
+                            if db_net:
+                                if db_net not in client_networks_to_join:
+                                    client_networks_to_join.append(db_net)
+                                if client_octet == 0:
+                                    parts = str(ip_addr).split('.')
+                                    if len(parts) == 4:
+                                        client_octet = int(parts[3])
+                    except:
+                        pass
+
+                # Second pass: identify access rules from AllowedIPs
                 for ip_str in allowed_ips:
                     ip_str = ip_str.strip()
                     if not ip_str: continue
                     
                     try:
-                        # Check if this IP belongs to one of our server networks
-                        # e.g ip_str = 10.0.0.5/32
-                        ip_addr = ipaddress.ip_interface(ip_str).ip
+                        if_obj = ipaddress.ip_interface(ip_str)
+                        if isinstance(if_obj, ipaddress.IPv6Interface): continue
+                            
+                        ip_addr = if_obj.ip
                         
                         matched_net = None
                         for net_obj in server_networks:
@@ -191,32 +307,30 @@ class ConfigImporter:
                                 break
                         
                         if matched_net:
-                            # It's a client address in a VPN network
-                            # Find DB network
+                            # It's one of our tunnel networks. 
+                            # If client isn't already in it, join it.
                             db_net = next((n for n in all_db_networks if n.cidr == str(matched_net)), None)
-                            if db_net:
+                            if db_net and db_net not in client_networks_to_join:
                                 client_networks_to_join.append(db_net)
-                                # Try to grab octet if it's the first one
-                                if client_octet == 0:
-                                    parts = str(ip_addr).split('.')
-                                    if len(parts) == 4:
-                                        client_octet = int(parts[3])
                         else:
-                            # It's a Route (subnet behind client)
-                            # e.g. 192.168.1.0/24
-                            client_routes.append(ip_str)
+                            # It's an Access Rule (target network/host)
+                            client_access_rules.append(ip_str)
                             
                     except:
-                        pass
+                        # Special handling for 0.0.0.0/0 or other non-interface strings
+                        if ip_str == '0.0.0.0/0':
+                            client_access_rules.append('0.0.0.0/0')
                 
                 # Create Client
                 new_client = Client(
                     name=name,
                     public_key=pub_key,
+                    private_key=p.get('privatekey', 'IMPORT_MISSING_PRIVATE_KEY'),
                     preshared_key=p.get('presharedkey'),
-                    octet=client_octet if client_octet > 0 else 0, # Should find a better way if duplicate
+                    octet=client_octet if client_octet > 0 else 0,
+                    keepalive=int(p.get('persistentkeepalive')) if p.get('persistentkeepalive') else None,
                     enabled=True,
-                    dns_mode='default' # Default assumption
+                    dns_mode='default'
                 )
                 db.session.add(new_client)
                 db.session.commit()
@@ -226,17 +340,20 @@ class ConfigImporter:
                     if n not in new_client.networks:
                         new_client.networks.append(n)
                 
-                # Add Routes
-                for r_cidr in client_routes:
-                    new_route = Route(
+                # Add Access Rules
+                for target_cidr in client_access_rules:
+                    rule = AccessRule(
                         source_client_id=new_client.id,
-                        target_cidr=r_cidr
+                        dest_cidr=target_cidr,
+                        destination_type='network' if '/' in target_cidr and not target_cidr.endswith('/32') else 'host',
+                        proto='all', # Requested: accept all protocols
+                        action='ACCEPT'
                     )
-                    db.session.add(new_route)
+                    db.session.add(rule)
+                    stats['access_rules_created'] += 1
                 
                 db.session.commit()
                 stats['clients_created'] += 1
-                stats['routes_created'] += len(client_routes)
                 
             return stats
             

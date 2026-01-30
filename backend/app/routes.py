@@ -72,7 +72,7 @@ def complete_setup():
 
 @bp.route('/import', methods=['POST'])
 def import_config():
-    """Import existing wg0.conf file."""
+    """Import existing wg0.conf file or PiVPN backup (.tgz)."""
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
     
@@ -80,14 +80,22 @@ def import_config():
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
 
+    force_purge = request.args.get('force_purge', 'false').lower() == 'true'
+
     if file:
         try:
-            content = file.read().decode('utf-8')
-            stats = ConfigImporter.process_config_content(content)
-            return jsonify({
-                'status': 'success', 
-                'stats': stats
-            })
+            filename = file.filename.lower()
+            if filename.endswith('.tgz') or filename.endswith('.tar.gz'):
+                result = ConfigImporter.process_backup(file.stream, force_purge=force_purge)
+                return jsonify(result)
+            else:
+                # Assume standard .conf file
+                content = file.read().decode('utf-8')
+                stats = ConfigImporter.process_config_content(content)
+                return jsonify({
+                    'status': 'success', 
+                    'stats': stats
+                })
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
