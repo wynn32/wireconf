@@ -94,8 +94,11 @@ class ConfigRenderer:
             "  remove)",
             "    remove_rules",
             "    ;;",
+            "  reload)",
+            "    apply_rules",
+            "    ;;",
             "  *)",
-            "    echo \"Usage: $0 {apply|remove}\"",
+            "    echo \"Usage: $0 {apply|remove|reload}\"",
             "    exit 1",
             "    ;;",
             "esac"
