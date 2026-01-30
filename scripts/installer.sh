@@ -4,7 +4,7 @@ set -e
 # Production Installer for WireGuard Management System
 # Supports: Debian, Fedora, Alpine
 
-INSTALL_DIR="/opt/wireguard-mgmt"
+INSTALL_DIR="/opt/wireconf"
 BACKEND_DIR="$INSTALL_DIR/backend"
 FRONTEND_DIR="$INSTALL_DIR/frontend"
 VENV_DIR="$BACKEND_DIR/venv"
@@ -76,11 +76,11 @@ echo "Configuring Nginx..."
 NGINX_CONF=""
 case $DISTRO in
     debian|ubuntu|fedora)
-        NGINX_CONF="/etc/nginx/sites-available/wireguard-mgmt"
-        NGINX_LINK="/etc/nginx/sites-enabled/wireguard-mgmt"
+        NGINX_CONF="/etc/nginx/sites-available/wireconf"
+        NGINX_LINK="/etc/nginx/sites-enabled/wireconf"
         ;;
     alpine)
-        NGINX_CONF="/etc/nginx/http.d/wireguard-mgmt.conf"
+        NGINX_CONF="/etc/nginx/http.d/wireconf.conf"
         ;;
 esac
 
@@ -114,7 +114,7 @@ fi
 echo "Configuring system services..."
 if [ "$DISTRO" = "alpine" ]; then
     # OpenRC for Alpine
-    cat > /etc/init.d/wireguard-mgmt <<EOF
+    cat > /etc/init.d/wireconf <<EOF
 #!/sbin/openrc-run
 
 description="WireGuard Management Backend"
@@ -122,10 +122,10 @@ command="$VENV_DIR/bin/gunicorn"
 command_args="--workers 3 --bind 127.0.0.1:5000 run:app"
 command_background="yes"
 directory="$BACKEND_DIR"
-pidfile="/run/wireguard-mgmt.pid"
+pidfile="/run/wireconf.pid"
 start_stop_daemon_args="--make-pidfile"
-output_log="/var/log/wireguard-mgmt.log"
-error_log="/var/log/wireguard-mgmt.err"
+output_log="/var/log/wireconf.log"
+error_log="/var/log/wireconf.err"
 
 # Allow time for workers to stop gracefully before killing
 retry="TERM/30/KILL/5"
@@ -142,12 +142,12 @@ start_pre() {
     fi
 }
 EOF
-chmod +x /etc/init.d/wireguard-mgmt
-    rc-update add wireguard-mgmt default
+chmod +x /etc/init.d/wireconf
+    rc-update add wireconf default
     rc-update add nginx default
 else
     # Systemd for Debian/Fedora
-    cat > /etc/systemd/system/wireguard-mgmt.service <<EOF
+    cat > /etc/systemd/system/wireconf.service <<EOF
 [Unit]
 Description=Gunicorn instance to serve WireGuard Management Backend
 After=network.target
@@ -164,17 +164,17 @@ Restart=always
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
-    systemctl enable wireguard-mgmt
+    systemctl enable wireconf
     systemctl enable nginx
 fi
 
 # Restart services
 echo "Starting services..."
 if [ "$DISTRO" = "alpine" ]; then
-    rc-service wireguard-mgmt restart
+    rc-service wireconf restart
     rc-service nginx restart
 else
-    systemctl restart wireguard-mgmt
+    systemctl restart wireconf
     systemctl restart nginx
 fi
 

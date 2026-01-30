@@ -6,7 +6,7 @@ set -e
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DIST_DIR="$REPO_ROOT/bundle_tmp"
-BUNDLE_NAME="wireguard-mgmt.zip"
+BUNDLE_NAME="wireconf.zip"
 
 echo "================================================"
 echo "  WireGuard Management System - Bundler"

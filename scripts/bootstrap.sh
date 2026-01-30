@@ -2,11 +2,11 @@
 set -e
 
 # Bootstrap script for one-click installation or update
-# This script should be located in the same directory as wireguard-mgmt.zip
+# This script should be located in the same directory as wireconf.zip
 
-INSTALL_DIR="/opt/wireguard-mgmt"
-BUNDLE_ZIP="wireguard-mgmt.zip"
-TMP_DIR="/tmp/wireguard-mgmt-bootstrap"
+INSTALL_DIR="/opt/wireconf"
+BUNDLE_ZIP="wireconf.zip"
+TMP_DIR="/tmp/wireconf-bootstrap"
 
 echo "================================================"
 echo "  WireGuard Management System - Bootstrap"
