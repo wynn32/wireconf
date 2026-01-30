@@ -62,8 +62,8 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                     await api.get('/setup/status', { timeout: 2000 });
 
                     // If success, confirm!
-                    clearInterval(verifyLoop);
                     await api.post('/commit/confirm', { transaction_id: transactionId });
+                    clearInterval(verifyLoop);
 
                     setSafetyState('idle');
                     setStatusMsg('Changes applied successfully!');

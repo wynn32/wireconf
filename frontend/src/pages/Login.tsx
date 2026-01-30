@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import api from '../api';
 
 export default function Login() {
     const [username, setUsername] = useState('');
@@ -12,25 +13,20 @@ export default function Login() {
         setError('');
 
         try {
-            const res = await fetch('/api/auth/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
-            });
+            // `api` is an axios instance with baseURL set to include `/api`.
+            const res = await api.post('/auth/login', { username, password });
 
-            const data = await res.json();
-
-            if (res.ok) {
-                // Successful login
-                // We can either reload the page or navigate. 
-                // Reloading ensures App.tsx mounts fresh and checks /me
+            // axios responses expose parsed body as `data` and status on `status`.
+            if (res.status >= 200 && res.status < 300) {
+                // Successful login: navigate and reload so App mounts and refreshes /me
                 navigate('/');
                 window.location.reload();
             } else {
-                setError(data.error || 'Invalid credentials');
+                setError(res.data?.error || 'Invalid credentials');
             }
-        } catch (err) {
-            setError('Login request failed');
+        } catch (err: any) {
+            // Prefer error message from server when available
+            setError(err?.response?.data?.error || 'Login request failed');
         }
     }
 

@@ -132,13 +132,13 @@ fi
 echo "Configuring system services..."
 if [ "$DISTRO" = "alpine" ]; then
     # OpenRC for Alpine
-    if [ ! -f /etc/init.d/wireguard-mgmt ] || [ "$FORCE_OVERWRITE" = true ]; then
-    cat > /etc/init.d/wireguard-mgmt <<EOF
+    if [ ! -f /etc/init.d/wireconf ] || [ "$FORCE_OVERWRITE" = true ]; then
+    cat > /etc/init.d/wireconf <<EOF
 #!/sbin/openrc-run
 
 description="WireGuard Management Backend"
 command="$VENV_DIR/bin/gunicorn"
-command_args="--workers 3 --bind 127.0.0.1:5000 run:app"
+command_args="--workers 1 --bind 127.0.0.1:5000 run:app"
 command_background="yes"
 directory="$BACKEND_DIR"
 pidfile="/run/wireconf.pid"
@@ -161,14 +161,14 @@ start_pre() {
     fi
 }
 EOF
-chmod +x /etc/init.d/wireguard-mgmt
+chmod +x /etc/init.d/wireconf
     fi
-    rc-update add wireguard-mgmt default
+    rc-update add wireconf default
     rc-update add nginx default
 else
     # Systemd for Debian/Fedora
-    if [ ! -f /etc/systemd/system/wireguard-mgmt.service ] || [ "$FORCE_OVERWRITE" = true ]; then
-    cat > /etc/systemd/system/wireguard-mgmt.service <<EOF
+    if [ ! -f /etc/systemd/system/wireconf.service ] || [ "$FORCE_OVERWRITE" = true ]; then
+    cat > /etc/systemd/system/wireconf.service <<EOF
 [Unit]
 Description=Gunicorn instance to serve WireGuard Management Backend
 After=network.target
@@ -178,7 +178,7 @@ User=root
 Group=root
 WorkingDirectory=$BACKEND_DIR
 Environment="PATH=$VENV_DIR/bin"
-ExecStart=$VENV_DIR/bin/gunicorn --workers 3 --bind 127.0.0.1:5000 run:app
+ExecStart=$VENV_DIR/bin/gunicorn --workers 1 --bind 127.0.0.1:5000 run:app
 Restart=always
 
 [Install]

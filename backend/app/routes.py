@@ -960,11 +960,11 @@ def commit_changes():
     try:
         result = _perform_commit()
         # If _perform_commit returned an error in its result dict (non-exception failure)
-        #if result.get('status', '').startswith('committed_with_warning'):
-        #     # This is a grey area: did it fail enough to warrant revert?
-        #     # Usually "committed_with_warning" means config was written but service restart failed.
-        #     # We might want to revert if the user can't confirm. Let's keep the timer going.
-        #     pass
+        if result.get('status', '').startswith('committed_with_warning'):
+             # This is a grey area: did it fail enough to warrant revert?
+             # Usually "committed_with_warning" means config was written but service restart failed.
+             # We might want to revert if the user can't confirm. Let's keep the timer going.
+             raise RuntimeError("A command error occurred.")
     except Exception as e:
         print(f"[Routes] Critical failure during commit: {e}")
         if transaction_id:
