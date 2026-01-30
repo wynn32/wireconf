@@ -124,12 +124,13 @@ def import_config():
         return jsonify({'error': 'No selected file'}), 400
 
     force_purge = request.args.get('force_purge', 'false').lower() == 'true'
+    create_access_rules = request.args.get('create_access_rules', 'all')  # 'all' or 'none'
 
     if file:
         try:
             filename = file.filename.lower()
             if filename.endswith('.tgz') or filename.endswith('.tar.gz'):
-                result = ConfigImporter.process_backup(file.stream, force_purge=force_purge)
+                result = ConfigImporter.process_backup(file.stream, force_purge=force_purge, create_access_rules=create_access_rules)
                 return jsonify(result)
             else:
                 # Assume standard .conf file

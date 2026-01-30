@@ -7,13 +7,19 @@ import shutil
 from .models import db, Client, Network, Route, ServerConfig, AccessRule, client_network_association
 from .key_manager import KeyManager
 from .setup_manager import SetupManager
+from .name_utils import resolve_client_name
 
 class ConfigImporter:
     @staticmethod
-    def process_backup(file_stream, force_purge=False):
+    def process_backup(file_stream, force_purge=False, create_access_rules='all'):
         """
         Processes a PiVPN backup .tgz file.
         Returns a dict with 'status' and 'stats' or 'mismatch_detected'.
+        
+        Args:
+            file_stream: File stream of the .tgz backup
+            force_purge: If True, purge existing data before import
+            create_access_rules: 'all' to create rules, 'none' to skip
         """
         try:
             with tarfile.open(fileobj=file_stream, mode="r:gz") as tar:
@@ -53,12 +59,16 @@ class ConfigImporter:
                 # Prepare base peers from server config
                 # We'll key them by public key for easier enrichment
                 peers_map = {}
+                server_endpoint = None  # Will try to extract from client configs
+                
                 for p in server_peers:
                     pk = p.get('publickey')
                     if pk:
                         # Normalize keys for fallback logic
                         p['presharedkey'] = p.get('presharedkey')
                         p['allowedips'] = p.get('allowedips')
+                        # Resolve name using centralized logic (comment -> IP -> generated)
+                        p['name'] = resolve_client_name(p)
                         peers_map[pk] = p
 
                 # 3. Find and Parse Client Configs to enrich with Private Keys
@@ -70,7 +80,7 @@ class ConfigImporter:
                         
                         try:
                             client_content = tar.extractfile(member).read().decode('utf-8')
-                            client_data, _ = ConfigImporter._parse_ini_content(client_content)
+                            client_data, client_peers = ConfigImporter._parse_ini_content(client_content)
                             
                             priv_key = client_data.get('privatekey')
                             if not priv_key:
@@ -78,20 +88,30 @@ class ConfigImporter:
                             
                             client_pub = KeyManager.generate_public_key(priv_key)
                             
+                            # Extract server endpoint from the first client config we find
+                            if not server_endpoint and client_peers:
+                                # Client configs have [Peer] section with Endpoint = hostname:port
+                                endpoint_value = client_peers[0].get('endpoint')
+                                if endpoint_value:
+                                    # Strip port if present (we have it from server config)
+                                    server_endpoint = endpoint_value.split(':')[0] if ':' in endpoint_value else endpoint_value
+                                    print(f"DEBUG: Extracted server endpoint from client config: {server_endpoint}")
+                            
                             if client_pub in peers_map:
-                                # Enrich existing peer with private key and server address
+                                # Enrich existing peer with private key and address
                                 peers_map[client_pub]['privatekey'] = priv_key
-                                # Address in client config is usually the IP it uses on the interface
+                                # Address in client config is the IP it uses on the interface
                                 if client_data.get('address'):
                                     peers_map[client_pub]['address'] = client_data.get('address')
-                        except:
+                        except Exception as e:
+                            print(f"Error processing client config {member.name}: {e}")
                             continue
 
                 final_peers = list(peers_map.values())
 
                 return {
                     'status': 'success',
-                    'stats': ConfigImporter._import_to_db(server_data, final_peers, force_purge=force_purge)
+                    'stats': ConfigImporter._import_to_db(server_data, final_peers, force_purge=force_purge, server_endpoint=server_endpoint, create_access_rules=create_access_rules)
                 }
         except Exception as e:
             raise e
@@ -251,7 +271,17 @@ class ConfigImporter:
                 peers[i]['_comment_name'] = new_name
 
     @staticmethod
-    def _import_to_db(server_data, peers_data, force_purge=False):
+    def _import_to_db(server_data, peers_data, force_purge=False, server_endpoint=None, create_access_rules='all'):
+        """
+        Import server and peer data to database.
+        
+        Args:
+            server_data: Server configuration dict
+            peers_data: List of peer configuration dicts
+            force_purge: If True, purge existing data before import
+            server_endpoint: Server endpoint (hostname) if available
+            create_access_rules: 'all' to create rules, 'none' to skip
+        """
         stats = {
             'server_updated': False,
             'networks_created': 0,
@@ -274,25 +304,45 @@ class ConfigImporter:
             # 1. Update Server Config
             server_config = SetupManager.get_server_config()
             
+            print(f"DEBUG: server_data keys: {server_data.keys()}")
+            print(f"DEBUG: server_data privatekey: {server_data.get('privatekey')}")
+            print(f"DEBUG: server_data listenport: {server_data.get('listenport')}")
+            
             pk = server_data.get('privatekey')
             if pk:
+                print(f"DEBUG: Setting server private key: {pk[:10]}...")
                 server_config.server_private_key = pk
                 try:
-                    server_config.server_public_key = KeyManager.generate_public_key(pk)
-                except:
-                    pass 
+                    pub_key = KeyManager.generate_public_key(pk)
+                    server_config.server_public_key = pub_key
+                    print(f"DEBUG: Generated server public key: {pub_key[:10]}...")
+                except Exception as e:
+                    print(f"DEBUG: Failed to generate public key: {e}")
             else:
+                print("DEBUG: No private key found in server_data")
                 if not server_config.server_private_key:
                     server_config.server_private_key = "IMPORT_MISSING_PRIVATE_KEY"
 
             port = server_data.get('listenport')
             if port:
                 server_config.server_port = int(port)
+                print(f"DEBUG: Set server port to {port}")
+            
+            # Set server endpoint if extracted from client configs
+            if server_endpoint:
+                server_config.server_endpoint = server_endpoint
+                print(f"DEBUG: Set server endpoint to {server_endpoint}")
             
             server_config.installed = True
             server_config.setup_completed = True
             stats['server_updated'] = True
+            
+            print(f"DEBUG: About to commit - server_private_key: {server_config.server_private_key[:10] if server_config.server_private_key else 'None'}...")
+            print(f"DEBUG: About to commit - server_public_key: {server_config.server_public_key[:10] if server_config.server_public_key else 'None'}...")
+            
             db.session.commit()
+            
+            print("DEBUG: Server config committed successfully")
             
             # 2. Extract Networks from [Interface] Address
             addresses = server_data.get('address', '').split(',')
@@ -342,14 +392,8 @@ class ConfigImporter:
                     existing_client = Client.query.filter_by(public_key=pub_key).first()
                     if existing_client: continue
                 
-                name = p.get('name') or p.get('_comment_name')
-                if not name:
-                    allowed_ips = p.get('allowedips', '').split(',')
-                    if allowed_ips and allowed_ips[0].strip():
-                        # Use the first IP address as the name (remove CIDR)
-                        name = allowed_ips[0].strip().split('/')[0]
-                    else:
-                        name = f"client_{pub_key[:5]}"
+                # Use centralized name resolution logic
+                name = resolve_client_name(p)
                 
                 client_addresses = p.get('address', '').split(',')
                 allowed_ips = p.get('allowedips', '').split(',')
@@ -385,28 +429,59 @@ class ConfigImporter:
                     except:
                         pass
 
-                # Access rules from AllowedIPs
+                # Separate routed networks from access destinations
+                # Routed networks = CIDRs in AllowedIPs that are NOT VPN subnets
+                client_routed_networks = []  # Networks this client routes TO
+                is_full_tunnel = False  # Track if client uses 0.0.0.0/0
+                
                 for ip_str in allowed_ips:
                     ip_str = ip_str.strip()
                     if not ip_str: continue
+                    
+                    # Check for full tunnel mode (will be handled differently later)
+                    if ip_str == '0.0.0.0/0':
+                        is_full_tunnel = True
+                        continue
+                    
                     try:
                         if_obj = ipaddress.ip_interface(ip_str)
                         if isinstance(if_obj, ipaddress.IPv6Interface): continue
+                        
+                        # Check if this is a network CIDR (not just a single IP)
+                        network_obj = if_obj.network
                         ip_addr = if_obj.ip
-                        matched_net = None
+                        
+                        # Check if this IP/network matches a VPN subnet
+                        matched_vpn = None
                         for net_obj in server_networks:
                             if ip_addr in net_obj:
-                                matched_net = net_obj
+                                matched_vpn = net_obj
                                 break
-                        if matched_net:
-                            db_net = next((n for n in all_db_networks if n.cidr == str(matched_net)), None)
+                        
+                        if matched_vpn:
+                            # This is a VPN subnet - add to networks AND access rules
+                            db_net = next((n for n in all_db_networks if n.cidr == str(matched_vpn)), None)
                             if db_net and db_net not in client_networks_to_join:
                                 client_networks_to_join.append(db_net)
+                            # Also add to access rules so client can communicate in this network
+                            if str(matched_vpn) not in client_access_rules:
+                                client_access_rules.append(str(matched_vpn))
                         else:
-                            client_access_rules.append(ip_str)
+                            # This is a non-VPN network
+                            # If it's a proper CIDR (not /32), treat as routed network
+                            if network_obj.prefixlen < 32:
+                                client_routed_networks.append(str(network_obj))
+                                # Also add to access rules so other clients can reach it
+                                client_access_rules.append(str(network_obj))
+                            else:
+                                # Single IP - just an access rule
+                                client_access_rules.append(ip_str)
                     except:
-                        if ip_str == '0.0.0.0/0':
-                            client_access_rules.append('0.0.0.0/0')
+                        pass
+                
+                print(f"DEBUG: Client {name} - is_full_tunnel: {is_full_tunnel}")
+                print(f"DEBUG: Client {name} - routed_networks: {client_routed_networks}")
+                print(f"DEBUG: Client {name} - access_rules: {client_access_rules}")
                 
                 processed_peers.append({
                     'name': name,
@@ -416,7 +491,9 @@ class ConfigImporter:
                     'octet': client_octet,
                     'keepalive': int(p.get('persistentkeepalive')) if p.get('persistentkeepalive') else None,
                     'networks': client_networks_to_join,
-                    'access_rules': client_access_rules
+                    'routed_networks': client_routed_networks,  # Networks this client routes
+                    'access_rules': client_access_rules,
+                    'is_full_tunnel': is_full_tunnel  # Flag for 0.0.0.0/0 clients
                 })
 
             # Sort peers: those with derived octets first to claim their specific IPs
@@ -466,17 +543,33 @@ class ConfigImporter:
                 for n in cp['networks']:
                     new_client.networks.append(n)
                 
-                # Add Access Rules
-                for target_cidr in cp['access_rules']:
-                    rule = AccessRule(
-                        source_client_id=new_client.id,
-                        dest_cidr=target_cidr,
-                        destination_type='network' if '/' in target_cidr and not target_cidr.endswith('/32') else 'host',
-                        proto='all',
-                        action='ACCEPT'
-                    )
-                    db.session.add(rule)
-                    stats['access_rules_created'] += 1
+                # Add Routes (for networks this client routes to)
+                for target_cidr in cp['routed_networks']:
+                    route = Route(target_cidr=target_cidr, via_client_id=new_client.id)
+                    db.session.add(route)
+                    stats['routes_created'] += 1
+                    print(f"DEBUG: Created route to {target_cidr} via {cp['name']}")
+                
+                # Add Access Rules (only if requested)
+                if create_access_rules == 'all':
+                    # Skip full-tunnel clients (0.0.0.0/0) - they tunnel everything anyway
+                    if cp.get('is_full_tunnel'):
+                        print(f"DEBUG: Skipping access rules for full-tunnel client {cp['name']} (has 0.0.0.0/0)")
+                    else:
+                        print(f"DEBUG: Creating {len(cp['access_rules'])} access rules for {cp['name']}")
+                        for target_cidr in cp['access_rules']:
+                            rule = AccessRule(
+                                source_client_id=new_client.id,
+                                dest_cidr=target_cidr,
+                                destination_type='network' if '/' in target_cidr and not target_cidr.endswith('/32') else 'host',
+                                proto='all',
+                                action='ACCEPT'
+                            )
+                            db.session.add(rule)
+                            stats['access_rules_created'] += 1
+                            print(f"DEBUG: Created ALLOW rule for {cp['name']} to {target_cidr}")
+                else:
+                    print(f"DEBUG: Skipping access rule creation (create_access_rules={create_access_rules})")
                 
                 stats['clients_created'] += 1
             

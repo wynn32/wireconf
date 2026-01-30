@@ -13,6 +13,7 @@ const ImportModal: React.FC<ImportModalProps> = ({ onClose, onSuccess }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [showConfirmPurge, setShowConfirmPurge] = useState(false);
+    const [createAccessRules, setCreateAccessRules] = useState<'all' | 'none'>('all');
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files.length > 0) {
@@ -30,7 +31,13 @@ const ImportModal: React.FC<ImportModalProps> = ({ onClose, onSuccess }) => {
         formData.append('file', file);
 
         try {
-            const url = forcePurge ? '/import?force_purge=true' : '/import';
+            // Build URL with query parameters
+            let url = '/import';
+            const params = new URLSearchParams();
+            if (forcePurge) params.append('force_purge', 'true');
+            params.append('create_access_rules', createAccessRules);
+            if (params.toString()) url += '?' + params.toString();
+
             const res = await api.post(url, formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data',
@@ -93,6 +100,43 @@ const ImportModal: React.FC<ImportModalProps> = ({ onClose, onSuccess }) => {
                                         </div>
                                     )}
                                 </div>
+
+                                {/* Rule Creation Behavior Section */}
+                                {file && (file.name.endsWith('.tgz') || file.name.endsWith('.tar.gz')) ? (
+                                    <div className="mb-5 p-4 bg-indigo-900/10 rounded-lg border border-indigo-900/20">
+                                        <h4 className="text-slate-200 text-sm mb-3">
+                                            Access Rule Creation
+                                        </h4>
+                                        <div className="flex flex-col gap-2">
+                                            <label className="flex items-center cursor-pointer">
+                                                <input
+                                                    type="radio"
+                                                    name="createRules"
+                                                    value="all"
+                                                    checked={createAccessRules === 'all'}
+                                                    onChange={() => setCreateAccessRules('all')}
+                                                    className="mr-2"
+                                                />
+                                                <span className="text-slate-300 text-xs">
+                                                    Create access rules for all networks (default)
+                                                </span>
+                                            </label>
+                                            <label className="flex items-center cursor-pointer">
+                                                <input
+                                                    type="radio"
+                                                    name="createRules"
+                                                    value="none"
+                                                    checked={createAccessRules === 'none'}
+                                                    onChange={() => setCreateAccessRules('none')}
+                                                    className="mr-2"
+                                                />
+                                                <span className="text-slate-300 text-xs">
+                                                    Don't create access rules (manual configuration)
+                                                </span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                ) : null}
 
                                 <div className="flex justify-end gap-3 mt-6">
                                     <button
