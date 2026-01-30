@@ -133,3 +133,23 @@ class SystemService:
             # Fallback/mock for empty result if command missing
             print(f"Failed to run wg show: {e}")
             return subprocess.CompletedProcess(args=[], returncode=1, stderr=str(e))
+
+    @staticmethod
+    def hard_restart(config_path: str = "/etc/wireguard/wg0.conf"):
+        """
+        Performs a full down/up cycle using the existing config file.
+        """
+        use_systemd = False
+        if shutil.which("systemctl"):
+            use_systemd = True
+            
+        service_name = f"wg-quick@{os.path.basename(config_path).replace('.conf', '')}"
+        interface_name = os.path.basename(config_path).replace('.conf', '')
+        
+        if use_systemd:
+            SystemService._run_command(["systemctl", "stop", service_name], check=False)
+            SystemService._run_command(["systemctl", "start", service_name], check=True)
+        else:
+            wg_quick_path = get_command_path("wg-quick")
+            SystemService._run_command([wg_quick_path, "down", interface_name], check=False)
+            SystemService._run_command([wg_quick_path, "up", interface_name], check=True)

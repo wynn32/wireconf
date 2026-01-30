@@ -156,6 +156,35 @@ const ServerSettings: React.FC = () => {
                     </div>
                 </form>
             </div>
+
+            <div className="bg-slate-800 rounded-lg p-6 border border-slate-700 shadow-xl">
+                <h3 className="text-xl font-bold text-white mb-4">Service Control</h3>
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 bg-slate-900/50 rounded-lg border border-slate-700">
+                    <div>
+                        <h4 className="text-white font-medium">Restart WireGuard Service</h4>
+                        <p className="text-sm text-slate-400">Perform a full service restart (down then up). Useful for troubleshooting.</p>
+                    </div>
+                    <button
+                        onClick={async () => {
+                            if (!confirm("This will briefly disconnect all active VPN sessions. Proceed with full service restart?")) return;
+                            setSaving(true);
+                            setMessage(null);
+                            try {
+                                await api.post('/wireguard/restart');
+                                setMessage({ text: 'WireGuard service restarted successfully.', type: 'success' });
+                            } catch (err: any) {
+                                setMessage({ text: err.response?.data?.error || 'Restart failed', type: 'error' });
+                            } finally {
+                                setSaving(false);
+                            }
+                        }}
+                        disabled={saving}
+                        className="bg-amber-600 hover:bg-amber-700 text-white px-6 py-2 rounded-lg font-bold shadow-lg shadow-amber-900/20 disabled:opacity-50 transition-all whitespace-nowrap"
+                    >
+                        Restart Service
+                    </button>
+                </div>
+            </div>
         </div>
     );
 };

@@ -277,6 +277,16 @@ def get_wireguard_status():
         
     return jsonify(response)
 
+@bp.route('/wireguard/restart', methods=['POST'])
+def restart_wireguard():
+    """Manually restart the WireGuard service."""
+    config_path = os.environ.get("WG_CONFIG_PATH", "/etc/wireguard/wg0.conf")
+    try:
+        SystemService.hard_restart(config_path)
+        return jsonify({'status': 'restarted'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 # ============================================================================
 # NETWORK ENDPOINTS
 # ============================================================================
