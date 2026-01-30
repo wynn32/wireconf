@@ -226,36 +226,18 @@ PresharedKey = {client.preshared_key}
         down = []
         
         CHAIN_NAME = "WG_ACCESS_CONTROL"
+        TEMP_CHAIN = "WG_ACCESS_TEMP"
         
         # --- PostUp ---
         
-        # 1. Create Chain (silence error if exists)
-        # We use a shell trick: iptables -N CHAIN 2>/dev/null || true
-        up.append(f"iptables -N {CHAIN_NAME} 2>/dev/null || true")
-        
-        # 2. Flush Chain (start clean)
-        up.append(f"iptables -F {CHAIN_NAME}")
-        
-        # 3. Ensure Jump exists in FORWARD chain (at the top)
-        # Check if exists, if not insert.
-        # Shell: iptables -C FORWARD -j WG_ACCESS_CONTROL 2>/dev/null || iptables -I FORWARD -j WG_ACCESS_CONTROL
-        up.append(f"iptables -C FORWARD -j {CHAIN_NAME} 2>/dev/null || iptables -I FORWARD -j {CHAIN_NAME}")
-        
-        # 4. Base Policy / Maintenance rules INSIDE the chain? 
-        # Or do we rely on the main FORWARD policy?
-        # User wanted "default access control to be deny".
-        # If we jump to WG_ACCESS_CONTROL, and rules don't match, we return to FORWARD.
-        # If FORWARD is DROP, we are good.
-        # But we should probably add a RETURN or DROP at the end of our chain if we want to be self-contained?
-        # Actually, "default ... deny traffic".
-        # Let's enforce DROP at the end of our chain for traffic on wg0?
-        # Or just set FORWARD policy:
+        # 0. Global Setup (Persistent across updates)
         up.append("iptables -P FORWARD DROP")
+        up.append("iptables -C FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || iptables -I FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT")
         
-        # Allow related/established (Global)
-        up.append("iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT")
+        # 1. Create/Flush Temp Chain
+        up.append(f"iptables -N {TEMP_CHAIN} 2>/dev/null || iptables -F {TEMP_CHAIN}")
         
-        # Process Rules
+        # 2. Process Rules (Targeting TEMP_CHAIN)
         for rule in rules:
             # Resolve Source IPs
             source_ips = []
@@ -282,7 +264,7 @@ PresharedKey = {client.preshared_key}
             for src_ip in source_ips:
                 for d_ip in dest_ips:
                     cmd_parts = []
-                    cmd_parts.append(f"-A {CHAIN_NAME}")
+                    cmd_parts.append(f"-A {TEMP_CHAIN}")
                     cmd_parts.append("-i wg0")
                     
                     if src_ip:
@@ -300,6 +282,15 @@ PresharedKey = {client.preshared_key}
                     cmd_parts.append(f"-j {rule.action}")
                     
                     up.append(f"iptables {' '.join(cmd_parts)}")
+
+        # 3. Atomic Swap
+        # We insert TEMP_CHAIN, then remove OLD, then rename TEMP to OLD.
+        # This replaces the entire rule set with practically zero gap.
+        up.append(f"iptables -I FORWARD -j {TEMP_CHAIN}")
+        up.append(f"iptables -D FORWARD -j {CHAIN_NAME} 2>/dev/null || true")
+        up.append(f"iptables -F {CHAIN_NAME} 2>/dev/null || true")
+        up.append(f"iptables -X {CHAIN_NAME} 2>/dev/null || true")
+        up.append(f"iptables -E {TEMP_CHAIN} {CHAIN_NAME}")
 
         # --- PostDown ---
         # 1. Remove Jump
