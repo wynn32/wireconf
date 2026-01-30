@@ -276,6 +276,15 @@ const RulesModal: React.FC<Props> = ({ client, onClose }) => {
                             <option value="all">All</option>
                         </select>
 
+                        <select
+                            className="bg-slate-800 border border-slate-600 rounded p-2 text-sm text-white"
+                            value={form.action}
+                            onChange={e => setForm({ ...form, action: e.target.value })}
+                        >
+                            <option value="ACCEPT">Allow</option>
+                            <option value="DROP">Deny</option>
+                        </select>
+
                         <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded text-sm">
                             Add Rule
                         </button>

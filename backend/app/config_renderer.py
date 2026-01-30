@@ -238,7 +238,11 @@ PresharedKey = {client.preshared_key}
         up.append(f"iptables -N {TEMP_CHAIN} 2>/dev/null || iptables -F {TEMP_CHAIN}")
         
         # 2. Process Rules (Targeting TEMP_CHAIN)
-        for rule in rules:
+        # Sort rules: DROP first to prevent shadowing by broad ACCEPT rules
+        # We use a stable sort so that DB order is preserved within same-action groups
+        sorted_rules = sorted(rules, key=lambda r: 0 if r.action == 'DROP' else 1)
+
+        for rule in sorted_rules:
             # Resolve Source IPs
             source_ips = []
             if rule.source_client_id:

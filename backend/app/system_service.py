@@ -76,7 +76,7 @@ class SystemService:
         # Make executable
         os.chmod(script_path, 0o755)
         # Apply
-        SystemService._run_command([script_path, "apply"], check=True)
+        SystemService._run_command(["/bin/bash", script_path, "apply"], check=True)
 
     @staticmethod
     def restart_service(new_config_content: str, config_path: str = "/etc/wireguard/wg0.conf"):

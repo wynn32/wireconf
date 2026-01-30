@@ -58,11 +58,17 @@ class SetupManager:
         }
     
     @staticmethod
-    def configure_server(endpoint: str, port: int):
+    def configure_server(endpoint: str, port: int, private_key: str = None, public_key: str = None):
         """Configure server endpoint and port."""
         config = SetupManager.get_server_config()
         config.server_endpoint = endpoint
         config.server_port = port
+        
+        if private_key:
+            config.server_private_key = private_key
+        
+        if public_key:
+            config.server_public_key = public_key
         
         # Generate keys if not already generated
         if not config.server_private_key:

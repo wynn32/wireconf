@@ -42,6 +42,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                             <Link to="/clients" className={navClass('/clients')}>Clients</Link>
                             <Link to="/networks" className={navClass('/networks')}>Networks</Link>
                             <Link to="/topology" className={navClass('/topology')}>Topology</Link>
+                            <Link to="/settings" className={navClass('/settings')}>Settings</Link>
                         </div>
                     </div>
                     <div className="flex items-center space-x-4">

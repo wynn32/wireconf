@@ -50,7 +50,13 @@ def configure_server():
     except ValueError:
         return jsonify({'error': 'Invalid port number'}), 400
     
-    result = SetupManager.configure_server(endpoint, port)
+    
+    result = SetupManager.configure_server(
+        endpoint, 
+        port, 
+        private_key=data.get('private_key'),
+        public_key=data.get('public_key')
+    )
     return jsonify(result)
 
 @bp.route('/setup/complete', methods=['POST'])
