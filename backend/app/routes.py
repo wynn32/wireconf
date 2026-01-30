@@ -169,6 +169,25 @@ def import_config():
         except Exception as e:
             return jsonify({'error': str(e)}), 500
 
+
+# ============================================================================
+# UTILITY ENDPOINTS
+# ============================================================================
+
+@bp.route('/tools/derive_public_key', methods=['POST'])
+def derive_public_key():
+    """Derive public key from private key."""
+    data = request.json
+    private_key = data.get('private_key')
+    if not private_key:
+        return jsonify({'error': 'Private key is required'}), 400
+        
+    try:
+        public_key = KeyManager.generate_public_key(private_key)
+        return jsonify({'public_key': public_key})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
 # ============================================================================
 # NETWORK ENDPOINTS
 # ============================================================================
@@ -241,6 +260,8 @@ def get_clients():
             'octet': c.octet,
             'ips': ips,  # Full IP addresses
             'public_key': c.public_key,
+            'private_key': c.private_key, # Expose for editing
+            'preshared_key': c.preshared_key, # Expose for editing
             'keepalive': c.keepalive,
             'enabled': c.enabled,
             'networks': [n.id for n in c.networks],
@@ -265,9 +286,18 @@ def create_client():
     tags = data.get('tags', []) # List of strings
     
     # Generate Keys
-    priv = KeyManager.generate_private_key()
-    pub = KeyManager.generate_public_key(priv)
-    psk = KeyManager.generate_preshared_key()
+    # Custom Keys Logic
+    priv = data.get('private_key')
+    pub = data.get('public_key')
+    psk = data.get('preshared_key')
+    
+    if not priv or not pub:
+        # Generate Keys if not provided
+        priv = KeyManager.generate_private_key()
+        pub = KeyManager.generate_public_key(priv)
+    
+    if not psk:
+        psk = KeyManager.generate_preshared_key()
     
     # Assign Octet
     # Check if octet requested? Assuming auto-assign for now as per plan
@@ -325,6 +355,18 @@ def update_client(client_id):
     dns_mode = data.get('dns_mode')
     dns_servers = data.get('dns_servers')
     tags = data.get('tags') # List of strings if provided
+    
+    # Custom Keys Update
+    private_key = data.get('private_key')
+    public_key = data.get('public_key')
+    preshared_key = data.get('preshared_key')
+    
+    if private_key:
+        client.private_key = private_key
+    if public_key:
+        client.public_key = public_key
+    if preshared_key:
+        client.preshared_key = preshared_key
 
     if enabled is not None:
         client.enabled = enabled

@@ -27,6 +27,25 @@ const ClientCreateModal: React.FC<ClientCreateModalProps> = ({ networks, onClose
     const [isRouter, setIsRouter] = useState(false);
     const [routedCidrs, setRoutedCidrs] = useState('');
 
+    // Custom Keys
+    const [useCustomKeys, setUseCustomKeys] = useState(false);
+    const [privateKey, setPrivateKey] = useState('');
+    const [publicKey, setPublicKey] = useState('');
+    const [presharedKey, setPresharedKey] = useState('');
+
+    const handleGeneratePublicKey = async () => {
+        if (!privateKey) {
+            alert('Please enter a private key first');
+            return;
+        }
+        try {
+            const res = await api.post('/tools/derive_public_key', { private_key: privateKey });
+            setPublicKey(res.data.public_key);
+        } catch (err: any) {
+            alert('Failed to generate public key: ' + (err.response?.data?.error || err.message));
+        }
+    };
+
     const toggleNet = (id: number) => {
         setSelectedNets(prev =>
             prev.includes(id) ? prev.filter(n => n !== id) : [...prev, id]
@@ -43,7 +62,10 @@ const ClientCreateModal: React.FC<ClientCreateModalProps> = ({ networks, onClose
                 keepalive: useKeepalive ? keepalive : undefined,
                 routes: routes,
                 dns_mode: dnsMode,
-                dns_servers: dnsMode === 'custom' ? customDns : null
+                dns_servers: dnsMode === 'custom' ? customDns : null,
+                private_key: useCustomKeys ? privateKey : undefined,
+                public_key: useCustomKeys ? publicKey : undefined,
+                preshared_key: useCustomKeys ? presharedKey : undefined
             };
 
             await api.post('/clients', payload);
@@ -192,6 +214,68 @@ const ClientCreateModal: React.FC<ClientCreateModalProps> = ({ networks, onClose
                                 </div>
                             )}
                         </div>
+                    </div>
+
+                    {/* Custom Keys Section */}
+                    <div className="pt-2 border-t border-slate-700">
+                        <label className="flex items-center gap-2 text-sm text-slate-300 mb-4 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={useCustomKeys}
+                                onChange={e => setUseCustomKeys(e.target.checked)}
+                                className="rounded bg-slate-700 border-slate-600 text-amber-500 focus:ring-amber-500"
+                            />
+                            <span className="font-semibold text-amber-400">Advanced: Manually Specify Keys</span>
+                        </label>
+
+                        {useCustomKeys && (
+                            <div className="space-y-3 bg-slate-900/50 p-4 rounded border border-slate-700">
+                                <div className="text-xs text-amber-200/70 mb-2">
+                                    <strong className="text-amber-200">Warning:</strong> Only use this if you know what you are doing. Keys are normally auto-generated securely.
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Private Key</label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            value={privateKey}
+                                            onChange={e => setPrivateKey(e.target.value)}
+                                            className="flex-1 bg-slate-800 border border-slate-600 rounded p-1.5 text-xs text-white outline-none font-mono"
+                                            placeholder="Base64 WireGuard Private Key"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={handleGeneratePublicKey}
+                                            className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-xs text-slate-200 rounded border border-slate-600 transition-colors"
+                                            title="Generate Public Key from Private Key"
+                                        >
+                                            Generate PubKey
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Public Key</label>
+                                    <input
+                                        value={publicKey}
+                                        onChange={e => setPublicKey(e.target.value)}
+                                        className="w-full bg-slate-800 border border-slate-600 rounded p-1.5 text-xs text-white outline-none font-mono"
+                                        placeholder="Base64 WireGuard Public Key"
+                                        readOnly={false}
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Preshared Key (Optional)</label>
+                                    <input
+                                        value={presharedKey}
+                                        onChange={e => setPresharedKey(e.target.value)}
+                                        className="w-full bg-slate-800 border border-slate-600 rounded p-1.5 text-xs text-white outline-none font-mono"
+                                        placeholder="Optional Preshared Key"
+                                    />
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {/* Actions */}

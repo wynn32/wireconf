@@ -16,6 +16,8 @@ interface Client {
     octet: number;
     ips: string[];  // Full IP addresses
     public_key: string;
+    private_key?: string; // Optional because legacy clients might not have it in state? Actually backend sends it now.
+    preshared_key?: string;
     networks: number[];
     keepalive?: number;
     routes: string[];
@@ -36,20 +38,47 @@ const ClientDetailsModal: React.FC<{
     const [isRouter, setIsRouter] = useState((client.routes && client.routes.length > 0));
     const [routedCidrs, setRoutedCidrs] = useState(client.routes ? client.routes.join(', ') : '');
 
-    // DNS Configuration
     const [dnsMode, setDnsMode] = useState<'default' | 'custom' | 'none'>(client.dns_mode || 'default');
     const [customDns, setCustomDns] = useState(client.dns_servers || '');
+
+    // Advanced Keys
+    const [showKeyEdit, setShowKeyEdit] = useState(false);
+    const [privateKey, setPrivateKey] = useState(client.private_key || '');
+    const [publicKey, setPublicKey] = useState(client.public_key || '');
+    const [presharedKey, setPresharedKey] = useState(client.preshared_key || '');
+
+    const handleGeneratePublicKey = async () => {
+        if (!privateKey) {
+            alert('Please enter a private key first');
+            return;
+        }
+        try {
+            const res = await api.post('/tools/derive_public_key', { private_key: privateKey });
+            setPublicKey(res.data.public_key);
+        } catch (err: any) {
+            alert('Failed to generate public key: ' + (err.response?.data?.error || err.message));
+        }
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
             const routes = isRouter && routedCidrs.trim() ? routedCidrs.split(',').map(s => s.trim()) : [];
-            await api.put(`/clients/${client.id}`, {
+            const payload: any = {
                 keepalive: useKeepalive ? keepalive : null,
                 routes: routes,
                 dns_mode: dnsMode,
                 dns_servers: dnsMode === 'custom' ? customDns : null
-            });
+            };
+
+            // Only send keys if they changed/are being edited
+            if (showKeyEdit) {
+                if (privateKey) payload.private_key = privateKey;
+                if (publicKey) payload.public_key = publicKey;
+                if (presharedKey) payload.preshared_key = presharedKey;
+            }
+
+            await api.put(`/clients/${client.id}`, payload);
             onSave();
         } catch (err: any) {
             alert('Failed to update settings');
@@ -157,6 +186,67 @@ const ClientDetailsModal: React.FC<{
                             </div>
                         )}
                     </div>
+
+
+
+                    {/* Key Editing Section */}
+                    <div className="border-t border-slate-700 pt-4">
+                        <label className="flex items-center gap-2 text-sm text-slate-300 mb-2 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={showKeyEdit}
+                                onChange={e => setShowKeyEdit(e.target.checked)}
+                                className="rounded bg-slate-700 border-slate-600 text-amber-500 focus:ring-amber-500"
+                            />
+                            <span className="font-semibold text-amber-400">Edit Keys (Advanced)</span>
+                        </label>
+                        {showKeyEdit && (
+                            <div className="space-y-3 bg-red-900/20 p-4 rounded border border-red-900/50">
+                                <div className="text-xs text-red-200 mb-2">
+                                    <strong>DANGER:</strong> Changing keys will break the client's current connection immediately. They must download and apply the new config.
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Private Key</label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            value={privateKey}
+                                            onChange={e => setPrivateKey(e.target.value)}
+                                            className="flex-1 bg-slate-800 border border-slate-600 rounded p-1.5 text-xs text-white outline-none font-mono"
+                                            placeholder="Private Key (hidden)"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={handleGeneratePublicKey}
+                                            className="px-2 py-1 bg-slate-700 hover:bg-slate-600 text-xs text-slate-200 rounded border border-slate-600 transition-colors"
+                                            title="Generate Public Key"
+                                        >
+                                            Gen PubKey
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Public Key</label>
+                                    <input
+                                        value={publicKey}
+                                        onChange={e => setPublicKey(e.target.value)}
+                                        className="w-full bg-slate-800 border border-slate-600 rounded p-1.5 text-xs text-white outline-none font-mono"
+                                    />
+                                </div>
+
+                                <div>
+                                    <label className="block text-xs text-slate-400 mb-1">Preshared Key</label>
+                                    <input
+                                        value={presharedKey}
+                                        onChange={e => setPresharedKey(e.target.value)}
+                                        className="w-full bg-slate-800 border border-slate-600 rounded p-1.5 text-xs text-white outline-none font-mono"
+                                    />
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
                     <div className="flex justify-end gap-2 mt-4">
                         <button type="button" onClick={onClose} className="text-slate-400 hover:text-white px-3 py-1">Cancel</button>
                         <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded">Save</button>
