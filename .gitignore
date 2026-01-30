@@ -4,3 +4,4 @@ __pycache__
 node_modules
 *.db
 wireguard-mgmt.zip
+package-lock.json
