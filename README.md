@@ -41,7 +41,7 @@ Native install
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-username/wireconf.git
+   git clone https://github.com/wynn32/wireconf.git
    cd wireconf
    ```
 
