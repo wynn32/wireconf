@@ -235,6 +235,15 @@ def run_interactive_setup():
                 db.session.add(client)
                 db.session.commit()
                 print(f"✓ Client '{name}' created")
+                
+                # Offer to show QR code for easy import
+                show_qr = get_input("Show QR code for this client?", "y").lower() == 'y'
+                if show_qr:
+                    # Use ConfigRenderer to generate client config
+                    server_config = SetupManager.get_server_config()
+                    server_endpoint = f"{server_config.server_endpoint}:{server_config.server_port}"
+                    client_config = ConfigRenderer.render_client_config(client, server_config.server_public_key, server_endpoint)
+                    show_qr_code(client_config)
             except Exception as e:
                 print(f"Error creating client: {e}")
                 db.session.rollback()
@@ -290,8 +299,12 @@ def patch_database():
                 
     print("✓ Database schema verified")
 
-def ensure_admin_user():
-    """Ensure at least one admin user exists and has full permissions via root preset."""
+def ensure_admin_user(force_create=False):
+    """Ensure at least one admin user exists and has full permissions via root preset.
+    
+    Args:
+        force_create: If True, force creation of first admin user without prompting about re-run.
+    """
     
     # 1. Ensure "root" preset exists
     root_preset = PermissionPreset.query.filter_by(name='root').first()
@@ -372,147 +385,159 @@ def reset_password():
         print(f"Error updating password: {e}")
 
 
-def run_setup():
-    print("\n" + "="*50)
-    print("WireGuard Setup CLI")
-    print("="*50 + "\n")
+def show_qr_code(client_config):
+    """Display QR code for client configuration."""
+    try:
+        import qrcode
+    except ImportError:
+        print("⚠ qrcode library not installed. Skipping QR code generation.")
+        return
     
+    try:
+        qr = qrcode.QRCode(version=None, box_size=1, border=1)
+        qr.add_data(client_config)
+        qr.make(fit=True)
+        
+        print("\n--- Client Configuration QR Code ---")
+        qr.print_ascii(invert=True)
+        print("\nYou can scan this QR code with a WireGuard mobile app to import the configuration.")
+    except Exception as e:
+        print(f"⚠ Error generating QR code: {e}")
+
+
+def finalize_setup():
+    """Generate and apply WireGuard configuration to the system."""
+    print("\n--- Finalizing Setup ---")
+
+    try:
+        SetupManager.complete_setup()
+        print("✓ Database updated")
+        
+        # Render and Apply Configuration
+        print("Generating WireGuard configuration...")
+        
+        server_config = SetupManager.get_server_config()
+        networks = Network.query.all()
+        clients = Client.query.all()
+        rules = AccessRule.query.all()
+        
+        wg_conf = ConfigRenderer.render_wg_conf(
+            server_config.server_private_key, 
+            server_config.server_port, 
+            networks, clients, rules
+        )
+        
+        fw_script = ConfigRenderer.render_firewall_script(networks, clients, rules)
+        
+        # Determine path (check env var or default)
+        wg_path = os.environ.get("WG_CONFIG_PATH", "/etc/wireguard/wg0.conf")
+        
+        # Write config file
+        config_dir = os.path.dirname(wg_path)
+        if not os.path.exists(config_dir):
+            try:
+                os.makedirs(config_dir, exist_ok=True)
+            except OSError:
+                pass
+
+        with open(wg_path, 'w') as f:
+            f.write(wg_conf)
+        os.chmod(wg_path, 0o600)
+        print(f"✓ Configuration written to {wg_path}")
+        
+        # Write rules script
+        rules_path = wg_path.replace('.conf', '-rules.sh')
+        with open(rules_path, 'w') as f:
+            f.write(fw_script)
+        os.chmod(rules_path, 0o755)
+        print(f"✓ Firewall script written to {rules_path}")
+        
+        # Restart Interface
+        print("Restarting WireGuard interface...")
+        # Ignore errors on down (interface might not be up)
+        subprocess.run(["wg-quick", "down", wg_path], capture_output=True)
+        try:
+            subprocess.run(["wg-quick", "up", wg_path], check=True, capture_output=True)
+            print("✓ Interface restarted successfully")
+        except subprocess.CalledProcessError as e:
+            print(f"⚠ Warning: Failed to bring up interface: {e.stderr.decode() if e.stderr else str(e)}")
+            print("You may need to check your configuration or logs.")
+            
+    except Exception as e:
+        print(f"Error finalizing setup: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def show_recovery_menu():
+    """Show maintenance/recovery options for already-configured systems."""
+    print("\nSystem already configured. Select an option:")
+    print("1. Reset User Password")
+    
+    mode = get_input("Select option", "1")
+    
+    if mode == "1":
+        reset_password()
+    
+    print("\nExiting.")
+
+
+def run_setup():
     with app.app_context():
         # 0. Patch Schema (if needed for upgrades)
         patch_database()
         
-        # 1. Ensure Admin User Exists (Bootstrap)
-        ensure_admin_user()
-    
-        # Check current status
-        if SetupManager.is_setup_complete():
-            print("Setup is already marked as complete in the database.")
-            choice = get_input("Do you want to re-run the setup? (This will overwrite server settings)", "n")
-            if choice.lower() != 'y':
-                # Even if skipping setup, we might want to offer password reset?
-                # User asked: "Otherwise add a menu option to reset a user's password in the standard execution of setup_cli.py"
-                # If they say "No" to re-running SETUP, maybe we should still show a menu?
-                # But existing behavior retuns. Let's stick to existing behavior for "No" unless explicitly asked to change flow structure.
-                # However, the "standard execution" implies the menu below.
-                # If existing setup is complete, it asks to re-run. If "n", it exits.
-                # I should probably allow reaching the menu or show a "Maintenance Menu" if setup is complete?
-                # Let's modify the flow slightly to allow Menu access even if setup is complete, OR just add the option to the setup menu.
-                # The prompt says: "Otherwise add a menu option to reset a user's password in the standard execution of setup_cli.py"
-                # I'll add it to the mode selection.
-                
-                # If they say NO to re-run, they exit. That's fine.
-                # If they say YES, or if not complete, they proceed to:
-                pass
-            else:
-                # Fallthrough to menu
-                pass
+        # 1. Check if users exist and force creation if not
+        user_existed_before = User.query.count() > 0
+        ensure_admin_user(force_create=not user_existed_before)
+        user_was_created = not user_existed_before
         
-        # If user said 'n' above, existing code returns. 
-        # But wait, if I want to offer Password Reset, I should probably show the menu regardless?
-        # Let's change the flow:
-        # If setup complete:
-        #   Menu: 
-        #   1. Re-run Setup
-        #   2. Reset Password
-        #   3. Exit
-        
-        # BUT, the original code had a specific check.
-        # Let's keep it simple. If setup complete, ask if want to re-run. 
-        # If 'n', check if we want to do maintenance?
-        # Actually, let's just insert the menu item in the main block.
-        
-        if SetupManager.is_setup_complete():
-             # If setup is complete, the original code asked "Do you want to re-run?". 
-             # I will modify this to be a Menu instead.
-             pass 
-
         # Mark installed (since we are running this, we assume it is installed)
         SetupManager.mark_installed()
         
-        print("\nPlease select a mode:")
-        print("1. Interactive Setup (Configure server, networks, clients manually)")
-        print("2. Import PiVPN Backup (Restore from .tgz file)")
-        print("3. Reset User Password")
+        # 2. Check if configuration exists
+        configs_exist = SetupManager.is_setup_complete()
         
-        mode = get_input("Select mode", "1")
-        
-        success = False
-        if mode == "2":
-            success = run_import()
-        elif mode == "3":
-            reset_password()
-            print("\nExiting.")
-            return # Exit after password reset
-        else:
-            success = run_interactive_setup()
+        # 3. Onboarding flow: if no configs, prompt for setup method
+        if not configs_exist:
+            print("\n--- Setup Configuration ---")
+            print("No configuration found. Please select a setup method:")
+            print("1. Create Network and Client manually")
+            print("2. Import PiVPN Backup")
+            print("3. Skip and set up in Web UI")
             
-        if not success:
-            print("\nSetup cancelled or failed.")
+            mode = get_input("Select option", "1")
+            
+            if mode == "3":
+                print("\n⚠ WARNING: No clients will be able to connect to the server until it is configured in the Web UI.")
+                print("\nExiting.")
+                return
+            
+            success = False
+            if mode == "2":
+                success = run_import()
+            else:
+                success = run_interactive_setup()
+            
+            if not success:
+                print("\nSetup cancelled or failed.")
+                return
+            
+            # Finalize setup after completing onboarding
+            finalize_setup()
+            
+            print("\nSetup Wizard Complete!")
             return
-
-        # 4. Finalize
-        print("\n--- Finalizing Setup ---")
-
-        try:
-            SetupManager.complete_setup()
-            print("✓ Database updated")
-            
-            # Render and Apply Configuration
-            print("Generating WireGuard configuration...")
-            
-            server_config = SetupManager.get_server_config()
-            networks = Network.query.all()
-            clients = Client.query.all()
-            rules = AccessRule.query.all()
-            
-            wg_conf = ConfigRenderer.render_wg_conf(
-                server_config.server_private_key, 
-                server_config.server_port, 
-                networks, clients, rules
-            )
-            
-            fw_script = ConfigRenderer.render_firewall_script(networks, clients, rules)
-            
-            # Determine path (check env var or default)
-            wg_path = os.environ.get("WG_CONFIG_PATH", "/etc/wireguard/wg0.conf")
-            
-            # Write config file
-            config_dir = os.path.dirname(wg_path)
-            if not os.path.exists(config_dir):
-                try:
-                    os.makedirs(config_dir, exist_ok=True)
-                except OSError:
-                    pass
-
-            with open(wg_path, 'w') as f:
-                f.write(wg_conf)
-            os.chmod(wg_path, 0o600)
-            print(f"✓ Configuration written to {wg_path}")
-            
-            # Write rules script
-            rules_path = wg_path.replace('.conf', '-rules.sh')
-            with open(rules_path, 'w') as f:
-                f.write(fw_script)
-            os.chmod(rules_path, 0o755)
-            print(f"✓ Firewall script written to {rules_path}")
-            
-            # Restart Interface
-            print("Restarting WireGuard interface...")
-            # Ignore errors on down (interface might not be up)
-            subprocess.run(["wg-quick", "down", wg_path], capture_output=True)
-            try:
-                subprocess.run(["wg-quick", "up", wg_path], check=True, capture_output=True)
-                print("✓ Interface restarted successfully")
-            except subprocess.CalledProcessError as e:
-                print(f"⚠ Warning: Failed to bring up interface: {e.stderr.decode() if e.stderr else str(e)}")
-                print("You may need to check your configuration or logs.")
-                
-        except Exception as e:
-            print(f"Error finalizing setup: {e}")
-            import traceback
-            traceback.print_exc()
-
-    print("\nSetup Wizard Complete!")
+        
+        # 4. Recovery menu: if configs exist and we didn't just create a user
+        if configs_exist and not user_was_created:
+            show_recovery_menu()
+            return
+        
+        # 5. Configs exist but user was just created (new setup)
+        if configs_exist and user_was_created:
+            print("\nConfiguration already exists. Exiting.")
+            return
 
 if __name__ == "__main__":
     run_setup()

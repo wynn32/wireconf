@@ -5,3 +5,4 @@ netaddr==0.10.1
 python-dotenv
 flask-cors
 gunicorn
+qrcode
