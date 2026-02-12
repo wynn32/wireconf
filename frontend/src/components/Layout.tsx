@@ -10,9 +10,10 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
     const [statusMsg, setStatusMsg] = useState('');
     const [showCommitModal, setShowCommitModal] = useState(false);
+    const verifyIntervalRef = React.useRef<any>(null);
 
     // Safety Mechanism State
-    const [safetyState, setSafetyState] = useState<'idle' | 'committing' | 'verifying' | 'reverting'>('idle');
+    const [safetyState, setSafetyState] = useState<'idle' | 'committing' | 'verifying' | 'reverting' | 'success'>('idle');
     const [countdown, setCountdown] = useState(60);
 
     // If on login page or not logged in, don't show Nav (unless we want to show a simple header)
@@ -44,13 +45,15 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             setCountdown(60);
 
             const start = Date.now();
-            const verifyLoop = setInterval(async () => {
+            if (verifyIntervalRef.current) clearInterval(verifyIntervalRef.current);
+
+            verifyIntervalRef.current = setInterval(async () => {
                 const now = Date.now();
                 const elapsed = (now - start) / 1000;
                 setCountdown(Math.floor(60 - elapsed));
 
                 if (elapsed > 60) {
-                    clearInterval(verifyLoop);
+                    if (verifyIntervalRef.current) clearInterval(verifyIntervalRef.current);
                     setSafetyState('reverting');
                     setStatusMsg('Connection lost. Changes reverted.');
                     setTimeout(() => setSafetyState('idle'), 5000);
@@ -63,11 +66,14 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
                     // If success, confirm!
                     await api.post('/commit/confirm', { transaction_id: transactionId });
-                    clearInterval(verifyLoop);
+                    if (verifyIntervalRef.current) clearInterval(verifyIntervalRef.current);
 
-                    setSafetyState('idle');
+                    setSafetyState('success');
                     setStatusMsg('Changes applied successfully!');
-                    setTimeout(() => setStatusMsg(''), 3000);
+                    setTimeout(() => {
+                        setSafetyState('idle');
+                        setStatusMsg('');
+                    }, 2000);
                 } catch (e) {
                     // Ignore transient failures, keep retrying until timeout
                     console.log("Ping failed, retrying...");
@@ -87,6 +93,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
     const handleCancelRevert = async () => {
         // User explicitly cancels verification -> Revert immediately
+        if (verifyIntervalRef.current) clearInterval(verifyIntervalRef.current);
         try {
             await api.post('/commit/cancel');
             setSafetyState('reverting');
@@ -196,6 +203,18 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
                     <div className="text-red-500 text-5xl mb-4">⚠️</div>
                     <h2 className="text-3xl font-bold text-white mb-2">Reverting Changes</h2>
                     <p className="text-slate-400">Restoring last known good configuration...</p>
+                </div>
+            )}
+
+            {safetyState === 'success' && (
+                <div className="fixed inset-0 bg-black/80 flex flex-col items-center justify-center z-[200] backdrop-blur text-center p-4">
+                    <div className="bg-slate-800 p-8 rounded-2xl shadow-2xl border border-slate-600 max-w-md w-full animate-in fade-in zoom-in duration-300">
+                        <div className="text-5xl mb-4">✅</div>
+                        <h2 className="text-2xl font-bold text-white mb-2">Success!</h2>
+                        <p className="text-slate-300">
+                            Connection verified. Changes applied permanently.
+                        </p>
+                    </div>
                 </div>
             )}
 

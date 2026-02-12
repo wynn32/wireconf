@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import api from '../api';
+import NetworkCidrInput from '../components/NetworkCidrInput';
 
 interface Network {
     id: number;
@@ -83,31 +84,18 @@ const Networks: React.FC = () => {
                             required
                         />
                     </div>
-                    <div>
-                        <label className="block text-sm text-slate-400 mb-1">CIDR (Zone)</label>
-                        <input
-                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-emerald-500 outline-none"
-                            value={formData.cidr}
-                            onChange={e => setFormData({ ...formData, cidr: e.target.value })}
-                            placeholder="e.g. 10.0.2.0/24"
-                            required
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-sm text-slate-400 mb-1">Interface IP</label>
-                        <input
-                            className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white focus:border-emerald-500 outline-none"
-                            value={formData.interface_address}
-                            onChange={e => setFormData({ ...formData, interface_address: e.target.value })}
-                            placeholder="e.g. 10.0.2.1/24"
-                            required
+                    <div className="md:col-span-2">
+                        <NetworkCidrInput
+                            cidrValue={formData.cidr}
+                            interfaceValue={formData.interface_address}
+                            onChange={(cidr, ip) => setFormData({ ...formData, cidr: cidr, interface_address: ip })}
                         />
                     </div>
                     <button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white p-2 rounded transition-colors font-medium">
                         Create Zone
                     </button>
                 </form>
-            </div>
+            </div >
 
             <div className="bg-slate-800 rounded-lg shadow-lg border border-slate-700 overflow-hidden">
                 <h2 className="text-xl font-semibold p-6 border-b border-slate-700 text-slate-100">Active Networks</h2>
@@ -184,7 +172,7 @@ const Networks: React.FC = () => {
                     </table>
                 </div>
             </div>
-        </div>
+        </div >
     );
 };
 

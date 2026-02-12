@@ -774,6 +774,7 @@ def commit_preview():
     summary = {
         'added_clients': [],
         'removed_clients': [],
+        'modified_clients': [],
         'modified_interface': False,
         'modified_peers': False,
         'modified_rules': False
@@ -834,6 +835,12 @@ def commit_preview():
                 summary['added_clients'].append({'name': client.name, 'id': client.id})
             else:
                 summary['added_clients'].append({'name': pk, 'id': None})
+        elif pk in old_peers and new_peers[pk] != old_peers[pk]:
+            client = next((c for c in clients if c.public_key == pk), None)
+            if client:
+                summary['modified_clients'].append({'name': client.name, 'id': client.id})
+            else:
+                summary['modified_clients'].append({'name': pk, 'id': None})
             
     for pk in old_peers:
         if pk not in new_peers:
